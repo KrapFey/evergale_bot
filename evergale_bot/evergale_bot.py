@@ -10,6 +10,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+load_dotenv()
+
 INTENTS = discord.Intents.default()
 INTENTS.guilds = True
 INTENTS.members = True
@@ -21,7 +23,9 @@ BOT = commands.Bot(command_prefix="!", intents=INTENTS)
 class Config:
     """Static configuration values."""
 
-    GUILD_ID: int = 1477751542705688828
+    GUILD_ID: int = int(os.getenv("GUILD_ID", 0))
+    SIGNUP_CHANNEL_ID: int = int(os.getenv("SIGNUP_CHANNEL_ID", 0))
+    SUMMARY_CHANNEL_ID: int = int(os.getenv("SUMMARY_CHANNEL_ID", 0))
     DEBOUNCE_SECONDS: float = 0.5
     MAX_RETRIES: int = 5
     DEFAULT_TIMEOUT: int = 30
@@ -39,6 +43,10 @@ REACTION_ROLES: dict[str, dict[str, int | str]] = {
     "🔨": {"name": "Stonesplit - Strength", "capacity": 3},
     "🔥": {"name": "Bamboocut - Kite", "capacity": 4},
 }
+
+# OPTIMIZATION: Pre-calculate static capacity once instead of on every embed build
+TOTAL_CAPACITY = sum(info["capacity"] for info in REACTION_ROLES.values()
+                     if isinstance(info.get("capacity"), int))
 
 
 class Debouncer:
@@ -97,6 +105,7 @@ class Debouncer:
                     attempt += 1
                     await asyncio.sleep(backoff)
                     backoff *= 2
+
             # final attempt, suppress exceptions
             with contextlib.suppress(Exception):
                 end_time = ReactionRoleManager.end_times.get(msg.id)
@@ -119,58 +128,43 @@ class ReactionRoleManager:
     async def build_status_embed(
         cls,
         message: discord.Message,
-        organizer: discord.Member | None = None,
+        organizer: discord.Member | discord.User | None = None,
         end_time_utc: datetime.datetime | None = None,
     ) -> discord.Embed:
-        """Construct the compact raid-style embed with timestamp and seconds."""
+        """Construct the live-updating embed matching the new style."""
         embed = discord.Embed(
-            title="TEST",
-            description="Sign up to test new functions.",
+            title="Sign-up Open",
+            description="Click the reactions below to sign up.",
             color=discord.Color.dark_teal(),
         )
 
         if organizer:
             embed.add_field(name="Organizer", value=organizer.display_name, inline=True)
 
-        total_capacity = sum(
-            info["capacity"]
-            for info in REACTION_ROLES.values()
-            if isinstance(info.get("capacity"), int)
-        )
-        embed.add_field(name="Capacity", value=f"{total_capacity} slots", inline=True)
+        embed.add_field(name="Capacity", value=f"{TOTAL_CAPACITY} slots", inline=True)
 
         if end_time_utc:
-            # embed.timestamp is rendered localized by clients
             embed.timestamp = end_time_utc
-            # explicit seconds field using Discord timestamp formatting
-            embed.add_field(
-                name="Ends at",
-                value=discord.utils.format_dt(end_time_utc, style="T"),
-                inline=True,
-            )
+            embed.add_field(name="Ends at",
+                            value=f"{discord.utils.format_dt(end_time_utc, style='T')} "
+                                  f"({discord.utils.format_dt(end_time_utc, style='R')})",
+                            inline=True)
+        else:
+            embed.add_field(name="Ends at", value="⏳ *Setting up...*", inline=True)
 
         embed.add_field(name="\u200b", value="\u200b", inline=False)
+
+        msg_reactions = {str(r.emoji): r for r in message.reactions}
 
         for emoji, info in REACTION_ROLES.items():
             role_name: str = info.get("name", "Role")
             capacity: int | None = info.get("capacity")
             count = 0
 
-            reaction_obj: discord.Reaction | None = None
-            for r in message.reactions:
-                if str(r.emoji) == emoji:
-                    reaction_obj = r
-                    break
+            reaction_obj = msg_reactions.get(emoji)
 
             if reaction_obj:
-                try:
-                    users = [u async for u in reaction_obj.users(limit=None)]
-                except discord.NotFound:
-                    users = []
-                except discord.HTTPException:
-                    users = []
-                participants = [u for u in users if not u.bot]
-                count = len(participants)
+                count = max(0, reaction_obj.count - 1)
 
             value = f"**{count} / {capacity}**" if capacity else f"**{count}**"
             embed.add_field(name=f"{emoji} {role_name}", value=value, inline=True)
@@ -183,37 +177,48 @@ class ReactionRoleManager:
         """Slash command handler: post embed, add reactions, and track message."""
         await interaction.response.defer(ephemeral=True)
 
-        now_utc = datetime.datetime.now(datetime.UTC)
-        end_dt_utc = (now_utc + datetime.timedelta(seconds=timeout)).replace(microsecond=0)
+        guild = interaction.guild
+        if not guild:
+            return
+
+        signup_channel = guild.get_channel(Config.SIGNUP_CHANNEL_ID)
+        summary_channel = guild.get_channel(Config.SUMMARY_CHANNEL_ID)
+
+        if not isinstance(signup_channel, discord.TextChannel) or not isinstance(summary_channel,
+                                                                                 discord.TextChannel):
+            await interaction.followup.send(
+                "Configuration error: One or both of the hardcoded channel IDs are invalid.",
+                ephemeral=True,
+            )
+            return
+
+        # 1. START THE CLOCK IMMEDIATELY
+        # The exact moment you hit enter, the deadline is set.
+        end_dt_utc = (discord.utils.utcnow()
+                      + datetime.timedelta(seconds=timeout)).replace(microsecond=0)
 
         initial_embed = discord.Embed(
-            title="TEST",
-            description="Sign up to test new functions.",
+            title="Sign-up Open",
+            description="Click the reactions below to sign up.",
             color=discord.Color.dark_teal(),
         )
         initial_embed.add_field(name="Organizer", value=interaction.user.display_name, inline=True)
+        initial_embed.add_field(name="Capacity", value=f"{TOTAL_CAPACITY} slots", inline=True)
 
-        total_capacity = sum(info["capacity"] for info in REACTION_ROLES.values()
-                             if isinstance(info.get("capacity"), int))
-        initial_embed.add_field(name="Capacity", value=f"{total_capacity} slots", inline=True)
-
-        initial_embed.timestamp = end_dt_utc
-        initial_embed.add_field(name="Ends at",
-                                value=discord.utils.format_dt(end_dt_utc, style="T"), inline=True)
+        # Show the "Setting up..." placeholder
+        initial_embed.add_field(name="Ends at", value="⏳ *Setting up...*", inline=True)
         initial_embed.add_field(name="\u200b", value="\u200b", inline=False)
 
         for emoji, info in REACTION_ROLES.items():
             role_name: str = info.get("name", "Role")
             capacity: int | None = info.get("capacity")
-            if capacity:
-                initial_embed.add_field(name=f"{emoji} {role_name}", value=f"**0 / {capacity}**",
-                                        inline=True)
-            else:
-                initial_embed.add_field(name=f"{emoji} {role_name}", value="**0**", inline=True)
+            value = f"**0 / {capacity}**" if capacity else "**0**"
+            initial_embed.add_field(name=f"{emoji} {role_name}", value=value, inline=True)
 
-        channel: discord.TextChannel = interaction.channel  # type: ignore[assignment]
-        msg: discord.Message = await channel.send(embed=initial_embed)
+        msg: discord.Message = await signup_channel.send(embed=initial_embed)
 
+        # 2. ADD REACTIONS
+        # Discord's API will burn about 7-8 seconds of your timeout here.
         for emoji in REACTION_ROLES:
             with contextlib.suppress(discord.HTTPException):
                 await msg.add_reaction(emoji)
@@ -221,49 +226,61 @@ class ReactionRoleManager:
         cls.tracked[msg.id] = msg.channel.id
         cls.end_times[msg.id] = end_dt_utc
 
-        await interaction.followup.send("Reaction role embed posted and now live!", ephemeral=True)
+        # 3. SETUP FINISHED. Show whatever time is left.
+        initial_embed.timestamp = end_dt_utc
+        initial_embed.set_field_at(2, name="Ends at",
+                                   value=f"{discord.utils.format_dt(end_dt_utc, style='T')} "
+                                         f"({discord.utils.format_dt(end_dt_utc, style='R')})",
+                                   inline=True)
+        await msg.edit(embed=initial_embed)
 
-        await asyncio.sleep(timeout)
+        await interaction.followup.send(
+            f"Sign-up embed posted and now live in {signup_channel.mention}!",
+            ephemeral=True,
+        )
 
+        # 4. SLEEP ONLY FOR THE REMAINING TIME
+        # If timeout=10s, and setup took 8s, it will only sleep for 2s.
+        time_left = (end_dt_utc - discord.utils.utcnow()).total_seconds()
+
+        if time_left > 0:
+            await asyncio.sleep(time_left)
+
+        # --- EVENT ENDS EXACTLY ON TIME ---
         try:
-            msg = await channel.fetch_message(msg.id)
+            msg = await signup_channel.fetch_message(msg.id)
         except discord.NotFound:
             cls.untrack(msg.id)
-            await channel.send("The reaction role message was removed before the event ended.")
+            await summary_channel.send("A sign-up message was removed before the event ended.")
             return
         except discord.HTTPException:
             cls.untrack(msg.id)
-            await channel.send("Could not fetch the reaction role message to build final stats.")
+            await summary_channel.send("Could not fetch the sign-up message to build final stats.")
             return
 
-        final_embed = discord.Embed(title="FINAL",
-                                    description=f"Final signup status after {timeout} seconds:",
+        final_embed = discord.Embed(title="FINAL SUMMARY",
+                                    description="Final signup status:",
                                     color=discord.Color.green())
         final_embed.add_field(name="Organizer", value=interaction.user.display_name, inline=True)
         final_embed.add_field(name="Status", value="Closed", inline=True)
         final_embed.add_field(name="\u200b", value="\u200b", inline=False)
 
+        msg_reactions = {str(r.emoji): r for r in msg.reactions}
+
         for emoji, info in REACTION_ROLES.items():
             role_name: str = info.get("name", "Role")
             capacity: int | None = info.get("capacity")
+            count = 0
 
-            reaction_obj: discord.Reaction | None = None
-            for r in msg.reactions:
-                if str(r.emoji) == emoji:
-                    reaction_obj = r
-                    break
+            reaction_obj = msg_reactions.get(emoji)
 
             if reaction_obj:
                 try:
                     users = [u async for u in reaction_obj.users(limit=None)]
-                except discord.NotFound:
-                    users = []
-                except discord.HTTPException:
-                    users = []
-                participants = [u for u in users if not u.bot]
-                count = len(participants)
-            else:
-                count = 0
+                    participants = [u for u in users if not u.bot]
+                    count = len(participants)
+                except (discord.NotFound, discord.HTTPException):
+                    pass
 
             value = f"**{count} / {capacity}**" if capacity else f"**{count}**"
             final_embed.add_field(name=f"{emoji} {role_name}", value=value, inline=True)
@@ -276,9 +293,10 @@ class ReactionRoleManager:
                 inline=True,
             )
 
-        await channel.send(embed=final_embed)
-
+        # 5. Post summary and clean channel
+        await summary_channel.send(embed=final_embed)
         cls.untrack(msg.id)
+
         with contextlib.suppress(discord.HTTPException):
             await msg.delete()
 
@@ -287,7 +305,6 @@ class ReactionRoleManager:
         """Stop tracking a message and remove stored end time."""
         cls.tracked.pop(message_id, None)
         cls.end_times.pop(message_id, None)
-
 
 class Cleaner:
     """Channel cleaning utilities exposed as a slash command."""
@@ -301,7 +318,7 @@ class Cleaner:
                                                     "to use this.", ephemeral=True)
             return
 
-        bot_member = interaction.guild.me or interaction.guild.get_member(BOT.user.id)
+        bot_member = interaction.guild.me
         if not bot_member or not bot_member.guild_permissions.manage_messages:
             await interaction.response.send_message("I need Manage Messages permission "
                                                     "to delete messages.", ephemeral=True)
@@ -343,6 +360,7 @@ class Cleaner:
 
         remaining: list[discord.Message] = []
         cutoff = discord.utils.utcnow() - datetime.timedelta(days=14)
+        tasks = []
 
         try:
             async for msg in channel.history(limit=limit):
@@ -351,18 +369,21 @@ class Cleaner:
                 if msg.created_at <= cutoff:
                     remaining.append(msg)
                 else:
-                    with contextlib.suppress(Exception):
-                        await msg.delete()
-                        deleted_count += 1
+                    # Collect tasks to delete concurrently
+                    tasks.append(msg.delete())
+
         except Exception:
             await interaction.followup.send("Failed to scan channel history. "
                                             "Check bot permissions.", ephemeral=True)
             return
 
-        for old_msg in remaining:
-            with contextlib.suppress(Exception):
-                await old_msg.delete()
-                deleted_count += 1
+        # Add remaining >14d old messages to the deletion task pool
+        tasks.extend([old_msg.delete() for old_msg in remaining])
+
+        # OPTIMIZATION: Delete messages concurrently instead of sequentially
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            deleted_count += sum(1 for r in results if not isinstance(r, Exception))
 
         await interaction.followup.send(
             f"Clean complete — removed **{deleted_count}** messages (filter: **{filter_value}**).",
@@ -382,11 +403,11 @@ async def on_ready() -> None:
     print(f"Synced {len(synced)} commands to guild {Config.GUILD_ID}")
 
 
-@BOT.tree.command(name="reactionroles",
-              description="Post a reaction role embed that updates live and gives a final summary")
-async def reactionroles_cmd(interaction: discord.Interaction,
-                            timeout: int = Config.DEFAULT_TIMEOUT) -> None:
-    """TODO."""
+@BOT.tree.command(name="sign-up",
+              description="Post a sign-up embed that updates live and gives a final summary")
+async def sign_up_cmd(interaction: discord.Interaction,
+                      timeout: int = Config.DEFAULT_TIMEOUT) -> None:
+    """Handles the /sign-up command."""
     await ReactionRoleManager.create_reactionroles(interaction, timeout=timeout)
 
 
@@ -397,10 +418,10 @@ async def reactionroles_cmd(interaction: discord.Interaction,
     limit="How many messages to scan (max 1000)",
     user="When filter=user, target this member",
 )
-async def clean_cmd(interaction: discord.Interaction, target: str = "all", limit: int = 100,
+async def clean_cmd(interaction: discord.Interaction, filter: str = "all", limit: int = 100,  # noqa: A002
                     user: discord.Member | None = None) -> None:
     """TODO."""
-    await Cleaner.clean_channel(interaction, filter_value=target, limit=limit, user=user)
+    await Cleaner.clean_channel(interaction, filter_value=filter, limit=limit, user=user)
 
 
 @BOT.event
@@ -439,7 +460,6 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent) -> Non
 
 def main() -> int:
     """Load environment and run the bot."""
-    load_dotenv()
     token = os.getenv("MAGIC")
     if not token:
         return 1
