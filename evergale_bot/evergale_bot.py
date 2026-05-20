@@ -127,6 +127,7 @@ async def on_ready() -> None:
 
 @BOT.tree.command(name="clean",
                   description="Clean messages in this channel (filters: all, bots, user)")
+@discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
     filter="Which messages to remove: all | bots | user",
     limit="How many messages to scan (max 1000)",
@@ -140,6 +141,7 @@ async def clean_cmd(interaction: discord.Interaction, filter: str = "all", limit
 
 @BOT.tree.command(name="archive-raid",
                   description="Forward a Raid-Helper embed to another channel and delete original")
+@discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
     source="The channel to search for the Raid-Helper message",
     destination="The channel to move the message to",
