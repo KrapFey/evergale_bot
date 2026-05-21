@@ -20,6 +20,12 @@ INTENTS.message_content = True
 BOT = commands.Bot(command_prefix="!", intents=INTENTS)
 
 
+def log(message: str) -> None:
+    """Helper to print nicely formatted and timestamped console logs."""
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now}] 🤖 {message}")
+
+
 class Config:
     """Static configuration values."""
 
@@ -35,13 +41,21 @@ class Cleaner:
     async def clean_channel(interaction: discord.Interaction, filter_value: str = "all",
                             limit: int = 100, user: discord.Member | None = None) -> None:
         """Clean messages in the current channel with filters and limit."""
+        channel = getattr(interaction, "channel", None)
+        channel_name = getattr(channel, "name", "unknown-channel")
+
+        log(f"[CLEAN] Initiated by @{interaction.user.name} in #{channel_name} "
+            f"(Filter: {filter_value}, Limit: {limit}, User: {getattr(user, 'name', 'None')})")
+
         if not interaction.user.guild_permissions.manage_messages:
+            log(f"[CLEAN] Failed: @{interaction.user.name} lacks Manage Messages permission.")
             await interaction.response.send_message("You need Manage Messages permission "
                                                     "to use this.", ephemeral=True)
             return
 
         bot_member = interaction.guild.me
         if not bot_member or not bot_member.guild_permissions.manage_messages:
+            log("[CLEAN] Failed: Bot lacks Manage Messages permission.")
             await interaction.response.send_message("I need Manage Messages permission "
                                                     "to delete messages.", ephemeral=True)
             return
@@ -54,8 +68,6 @@ class Cleaner:
 
         limit = max(1, min(limit, Config.MAX_PURGE_SCAN))
         await interaction.response.defer(ephemeral=True)
-
-        channel: discord.TextChannel = interaction.channel  # type: ignore[assignment]
 
         def check(msg: discord.Message) -> bool:
             if msg.id == interaction.id:
@@ -70,15 +82,17 @@ class Cleaner:
 
         deleted_count = 0
         try:
+            log(f"[CLEAN] Purging up to {limit} recent messages...")
             deleted = await channel.purge(limit=limit, check=check, bulk=True)
             deleted_count += len(deleted)
         except discord.Forbidden:
+            log("[CLEAN] Failed: Bot forbidden from deleting in this channel.")
             await interaction.followup.send("I don't have permission to delete messages "
                                             "in this channel.", ephemeral=True)
             return
         except discord.HTTPException:
             # fall back to manual deletion
-            pass
+            log("[CLEAN] Bulk purge failed, falling back to manual history scan.")
 
         remaining: list[discord.Message] = []
         cutoff = discord.utils.utcnow() - datetime.timedelta(days=14)
@@ -94,7 +108,8 @@ class Cleaner:
                     # Collect tasks to delete concurrently
                     tasks.append(msg.delete())
 
-        except Exception:
+        except Exception as e:
+            log(f"[CLEAN] Failed history scan: {e}")
             await interaction.followup.send("Failed to scan channel history. "
                                             "Check bot permissions.", ephemeral=True)
             return
@@ -104,9 +119,11 @@ class Cleaner:
 
         # Delete messages concurrently instead of sequentially
         if tasks:
+            log(f"[CLEAN] Concurrently deleting {len(tasks)} manual messages...")
             results = await asyncio.gather(*tasks, return_exceptions=True)
             deleted_count += sum(1 for r in results if not isinstance(r, Exception))
 
+        log(f"[CLEAN] Success: Removed {deleted_count} messages.")
         await interaction.followup.send(
             f"Clean complete — removed **{deleted_count}** messages (filter: **{filter_value}**).",
             ephemeral=True,
@@ -118,13 +135,18 @@ class Cleaner:
 
 @BOT.event
 async def on_ready() -> None:
-    """Sync commands to the configured guild on ready (instant visibility)."""
+    """Sync commands cleanly to your specific server."""
+    log(f"Logged in as {BOT.user.name} (ID: {BOT.user.id})")
+
     guild = discord.Object(id=Config.GUILD_ID)
+
     BOT.tree.copy_global_to(guild=guild)
     synced = await BOT.tree.sync(guild=guild)
+
+    # Explicitly overwrite global commands without wiping internal memory
     await BOT.tree.sync(guild=None)
-    print("Successfully cleared old global commands.")
-    print(f"Synced {len(synced)} active commands to guild {Config.GUILD_ID}")
+
+    log(f"Synced {len(synced)} active commands to guild {Config.GUILD_ID}")
 
 
 @BOT.tree.command(name="clean",
@@ -158,11 +180,14 @@ async def archive_raid_cmd(interaction: discord.Interaction,
                            archive_limit: int = 50,
                            scan_limit: int = 200) -> None:
     """Finds multiple Raid-Helper messages, forwards them, and deletes the originals."""
-    # Defer immediately since moving 50 messages will take longer than Discord's 3-second timeout
+    log(f"[ARCHIVE] Initiated by @{interaction.user.name} | From: #{source.name} -> "
+        f"To: #{destination.name} "
+        f"| Tag: {tag} | Max Archive: {archive_limit} | Scan depth: {scan_limit}")
+
     await interaction.response.defer(ephemeral=True)
 
-    # Enforce permissions
     if not interaction.user.guild_permissions.manage_messages:
+        log(f"[ARCHIVE] Failed: @{interaction.user.name} lacks Manage Messages permission.")
         await interaction.followup.send(
             "You need Manage Messages permission to use this.",
             ephemeral=True,
@@ -172,29 +197,26 @@ async def archive_raid_cmd(interaction: discord.Interaction,
     target_messages: list[discord.Message] = []
 
     try:
-        # Scan the source channel's history
+        log(f"[ARCHIVE] Scanning {scan_limit} messages in #{source.name}...")
         async for msg in source.history(limit=scan_limit):
             if msg.author.id == Config.RAID_HELPER_ID:
 
-                # If a tag was provided, verify it exists inside the embed
                 if tag:
                     tag_found = False
                     for embed in msg.embeds:
-                        # Convert dict to string for a quick deep search of all embed text
                         if tag.lower() in str(embed.to_dict()).lower():
                             tag_found = True
                             break
 
                     if not tag_found:
-                        continue  # Skip this message, keep scanning
+                        continue
 
                 target_messages.append(msg)
-
-                # Stop scanning if we've hit the archive limit
                 if len(target_messages) >= archive_limit:
                     break
 
     except discord.Forbidden:
+        log(f"[ARCHIVE] Failed: Bot cannot read history in #{source.name}.")
         await interaction.followup.send(
             f"I don't have permission to read message history in {source.mention}.",
             ephemeral=True,
@@ -202,6 +224,7 @@ async def archive_raid_cmd(interaction: discord.Interaction,
         return
 
     if not target_messages:
+        log("[ARCHIVE] Success/Empty: No matching Raid-Helper messages found.")
         msg_suffix = f" containing the tag `{tag}`" if tag else ""
         await interaction.followup.send(
             f"Could not find any Raid-Helper messages{msg_suffix} in the last {scan_limit} "
@@ -210,25 +233,25 @@ async def archive_raid_cmd(interaction: discord.Interaction,
         )
         return
 
-    # Reverse the list so the oldest messages get forwarded first (maintains chronological order)
     target_messages.reverse()
-
     archived_count = 0
     failed_count = 0
 
-    # Process the messages sequentially to avoid API rate limits
+    log(f"[ARCHIVE] Starting to forward and delete {len(target_messages)} messages...")
+
     for msg in target_messages:
         try:
             await msg.forward(destination)
             await msg.delete()
             archived_count += 1
-            # Sleep for 1 second to prevent Discord from rate-limiting the bot for spam
             await asyncio.sleep(1)
-        except discord.HTTPException:
+        except discord.HTTPException as e:
+            log(f"[ARCHIVE] Warning: Failed to move message ID {msg.id}: {e}")
             failed_count += 1
             continue
 
-    # Final Summary
+    log(f"[ARCHIVE] Complete: {archived_count} moved successfully, {failed_count} failed.")
+
     fail_text = f" ({failed_count} failed due to API errors)" if failed_count > 0 else ""
     await interaction.followup.send(
         f"**Archive Complete!**\n"
@@ -243,7 +266,7 @@ def main() -> int:
     if not token:
         print("Missing MAGIC token in environment variables.")
         return 1
-    BOT.run(token)
+    BOT.run(token, log_handler=None) # Disables standard discord logs to keep console clean
     return 0
 
 
