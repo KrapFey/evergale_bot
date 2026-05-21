@@ -3,6 +3,7 @@
 import asyncio
 import datetime
 import os
+import re
 import sys
 
 import discord
@@ -271,10 +272,9 @@ async def parse_roster_cmd(interaction: discord.Interaction,
                            message_id: str,
                            destination: discord.TextChannel) -> None:
     """Parses a Raid-Helper message and creates a tabular summary sent to a destination channel."""
-    log(f"[ROSTER] Initiated by @{interaction.user.name} for msg {message_id} -> To: "
-        f"#{destination.name}")
+    log(f"[ROSTER] Initiated by @{interaction.user.name} for msg {message_id} -> "
+        f"To: #{destination.name}")
 
-    # We set ephemeral=True so the working/error messages don't clutter the chat
     await interaction.response.defer(ephemeral=True)
 
     source_channel = interaction.channel
@@ -283,7 +283,6 @@ async def parse_roster_cmd(interaction: discord.Interaction,
                                         ephemeral=True)
         return
 
-    # Fetch the message from the current channel
     try:
         msg_id_int = int(message_id.strip())
         target_msg = await source_channel.fetch_message(msg_id_int)
@@ -291,15 +290,14 @@ async def parse_roster_cmd(interaction: discord.Interaction,
         await interaction.followup.send("Message ID must be a valid number.", ephemeral=True)
         return
     except discord.NotFound:
-        await interaction.followup.send("Message not found in this channel. "
-                                        "Make sure you are running this command in the same "
-                                        "channel as the sign-up.", ephemeral=True)
+        await interaction.followup.send("Message not found in this channel. Make sure you are "
+                                        "running this command in the same channel as the sign-up.",
+                                        ephemeral=True)
         return
     except discord.HTTPException as e:
         await interaction.followup.send(f"API Error: {e}", ephemeral=True)
         return
 
-    # Validate it's from Raid-Helper
     if target_msg.author.id != Config.RAID_HELPER_ID:
         await interaction.followup.send("That message was not sent by the Raid-Helper bot.",
                                         ephemeral=True)
@@ -317,7 +315,6 @@ async def parse_roster_cmd(interaction: discord.Interaction,
         for field in embed.fields:
             full_text.append(f"{field.name}\n{field.value}")
 
-    # Split the massive chunk of text into individual lines
     lines = "\n".join(full_text).split("\n")
 
     accepted = []
@@ -325,8 +322,8 @@ async def parse_roster_cmd(interaction: discord.Interaction,
     current_list = None
 
     for line in lines:
-        # Strip invisible unicode characters that Raid-Helper uses for layout (\u200e and \u2800)
-        clean_line = line.replace("\u200e", "").replace("\u2800", "").strip()
+        # Strip all known invisible Unicode spacing that Raid-Helper uses
+        clean_line = re.sub(r"[\u2000-\u200F\u2800\uFEFF]", "", line).strip()
 
         if not clean_line:
             continue
@@ -339,20 +336,23 @@ async def parse_roster_cmd(interaction: discord.Interaction,
             current_list = maybe
             continue
         if "Declined" in clean_line or "Absence" in clean_line or "Late" in clean_line:
-            current_list = None # Stop recording for these sections
+            current_list = None
             continue
 
-        # Parse the user rows
+        # If we are in a valid section, aggressively extract the number and name
         if current_list is not None:
-            parts = clean_line.split(maxsplit=1)
+        # REGEX: Start of line -> optional weird characters -> (NUMBER) -> space -> (ANYTHING ELSE)
+            match = re.match(r"^\D*?(\d+)\s+(.+)$", clean_line)
 
-            # If the first part is a number, it's a valid roster line
-            if len(parts) == 2 and parts[0].isdigit():
-                current_list.append((parts[0], parts[1]))
+            if match:
+                slot = match.group(1)
+                name = match.group(2).strip()
+                current_list.append((slot, name))
 
     if not accepted and not maybe:
-        await interaction.followup.send("Could not find any 'Accepted' or 'Maybe' "
-                                        "users in that embed.", ephemeral=True)
+        await interaction.followup.send("Could not find any 'Accepted' or 'Maybe' users. "
+                                        "The embed might be empty or formatted unusually.",
+                                        ephemeral=True)
         return
 
     # Build the response using Discord Native Markdown Tables
@@ -364,7 +364,7 @@ async def parse_roster_cmd(interaction: discord.Interaction,
         response_lines.append("|---|---|")
         for role, name in accepted:
             response_lines.append(f"| {role} | {name} |")
-        response_lines.append("") # Empty line for spacing
+        response_lines.append("")
 
     if maybe:
         response_lines.append("### ❔ Maybe")
@@ -379,13 +379,11 @@ async def parse_roster_cmd(interaction: discord.Interaction,
         final_message = final_message[:1996] + "..."
 
     try:
-        # Send the final table message to the destination channel
         await destination.send(final_message)
-
-        # Confirm privately to the administrator
         await interaction.followup.send("Successfully processed roster and sent to "
                                         f"{destination.mention}!", ephemeral=True)
-        log(f"[ROSTER] Successfully parsed roster and sent to #{destination.name}")
+        log(f"[ROSTER] Successfully parsed roster and sent to #{destination.name} "
+            f"({len(accepted)} Accepted, {len(maybe)} Maybe)")
     except discord.Forbidden:
         await interaction.followup.send("I don't have permission to send messages in "
                                         f"{destination.mention}.", ephemeral=True)
