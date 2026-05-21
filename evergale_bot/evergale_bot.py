@@ -386,21 +386,30 @@ async def parse_roster_cmd(
         log(f"[ROSTER] Failed: Found no users for {message_id}. Regex bypassed.")
         return
 
+    # Build the response using Discord Native Markdown Tables
     response_lines = []
     if accepted:
-        response_lines.extend(["### ✅ Accepted", "| Slot | Name |", "|---|---|"])
+        response_lines.extend(["# ✅ Accepted", "| Slot | Name |", "|---|---|"])
         for role, name in accepted:
             response_lines.append(f"| {role} | {name} |")
         response_lines.append("")
 
     if maybe:
-        response_lines.extend(["### ❔ Maybe", "| Slot | Name |", "|---|---|"])
+        response_lines.extend(["# ❔ Maybe", "| Slot | Name |", "|---|---|"])
         for role, name in maybe:
             response_lines.append(f"| {role} | {name} |")
 
-    final_message = "\n".join(response_lines)
+    # Combine everything into a single string
+    inner_text = "\n".join(response_lines)
+
+    # Wrap it in a markdown codeblock
+    final_message = f"```markdown\n{inner_text}\n```"
+
+    # Ensure it doesn't break Discord's 2000 character limit
+    # If it's too long, truncate the text INSIDE so we don't lose the closing backticks
     if len(final_message) > 2000:
-        final_message = final_message[:1996] + "..."
+        safe_inner = inner_text[:1980] + "..."
+        final_message = f"```markdown\n{safe_inner}\n```"
 
     try:
         await destination.send(final_message)
