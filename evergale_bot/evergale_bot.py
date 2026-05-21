@@ -140,20 +140,23 @@ async def clean_cmd(interaction: discord.Interaction, filter: str = "all", limit
 
 
 @BOT.tree.command(name="archive-raid",
-                  description="Forward a Raid-Helper embed to another channel and delete original")
+                  description="Forward Raid-Helper embeds to another channel and delete originals")
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
-    source="The channel to search for the Raid-Helper message",
-    destination="The channel to move the message to",
-    limit="How many messages back to search (default 50)",
+    source="The channel to search for the Raid-Helper messages",
+    destination="The channel to move the messages to",
     tag="Optional tag to look for inside the embed (e.g. #sun_gw)",
+    archive_limit="Max matched messages to archive (default 50)",
+    scan_limit="How many messages back to search overall (default 200)",
 )
 async def archive_raid_cmd(interaction: discord.Interaction,
                            source: discord.TextChannel,
                            destination: discord.TextChannel,
-                           limit: int = 50,
-                           tag: str | None = None) -> None:
-    """Finds a Raid-Helper message (optionally by tag), forwards it, and deletes the original."""
+                           tag: str | None = None,
+                           archive_limit: int = 50,
+                           scan_limit: int = 200) -> None:
+    """Finds multiple Raid-Helper messages, forwards them, and deletes the originals."""
+    # Defer immediately since moving 50 messages will take longer than Discord's 3-second timeout
     await interaction.response.defer(ephemeral=True)
 
     # Enforce permissions
@@ -164,10 +167,11 @@ async def archive_raid_cmd(interaction: discord.Interaction,
         )
         return
 
-    target_msg = None
+    target_messages: list[discord.Message] = []
+
     try:
-        # Scan the source channel's history for the bot
-        async for msg in source.history(limit=limit):
+        # Scan the source channel's history
+        async for msg in source.history(limit=scan_limit):
             if msg.author.id == Config.RAID_HELPER_ID:
 
                 # If a tag was provided, verify it exists inside the embed
@@ -180,10 +184,14 @@ async def archive_raid_cmd(interaction: discord.Interaction,
                             break
 
                     if not tag_found:
-                        continue  # Skip this message, keep searching older ones
+                        continue  # Skip this message, keep scanning
 
-                target_msg = msg
-                break
+                target_messages.append(msg)
+
+                # Stop scanning if we've hit the archive limit
+                if len(target_messages) >= archive_limit:
+                    break
+
     except discord.Forbidden:
         await interaction.followup.send(
             f"I don't have permission to read message history in {source.mention}.",
@@ -191,35 +199,40 @@ async def archive_raid_cmd(interaction: discord.Interaction,
         )
         return
 
-    if not target_msg:
+    if not target_messages:
         msg_suffix = f" containing the tag `{tag}`" if tag else ""
         await interaction.followup.send(
-            f"Could not find a Raid-Helper message{msg_suffix} in the last {limit} "
+            f"Could not find any Raid-Helper messages{msg_suffix} in the last {scan_limit} "
             f"messages of {source.mention}.",
             ephemeral=True,
         )
         return
 
-    try:
-        # Forward the message natively
-        await target_msg.forward(destination)
+    # Reverse the list so the oldest messages get forwarded first (maintains chronological order)
+    target_messages.reverse()
 
-        # Delete the original message
-        await target_msg.delete()
+    archived_count = 0
+    failed_count = 0
 
-        await interaction.followup.send(
-            f"Successfully forwarded the Raid-Helper archive to {destination.mention} and "
-            "removed the original.",
-            ephemeral=True,
-        )
-    except discord.Forbidden:
-        await interaction.followup.send(
-            "I lack permissions to either forward messages to the destination channel "
-            "or delete the original message.",
-            ephemeral=True,
-        )
-    except discord.HTTPException as e:
-        await interaction.followup.send(f"An API error occurred: {e}", ephemeral=True)
+    # Process the messages sequentially to avoid API rate limits
+    for msg in target_messages:
+        try:
+            await msg.forward(destination)
+            await msg.delete()
+            archived_count += 1
+            # Sleep for 1 second to prevent Discord from rate-limiting the bot for spam
+            await asyncio.sleep(1)
+        except discord.HTTPException:
+            failed_count += 1
+            continue
+
+    # Final Summary
+    fail_text = f" ({failed_count} failed due to API errors)" if failed_count > 0 else ""
+    await interaction.followup.send(
+        f"**Archive Complete!**\n"
+        f"Moved **{archived_count}** Raid-Helper messages to {destination.mention}.{fail_text}",
+        ephemeral=True,
+    )
 
 
 def main() -> int:
