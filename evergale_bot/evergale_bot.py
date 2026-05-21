@@ -120,9 +120,17 @@ class Cleaner:
 async def on_ready() -> None:
     """Sync commands to the configured guild on ready (instant visibility)."""
     guild = discord.Object(id=Config.GUILD_ID)
+
+    # 1. Clear any old global commands from Discord's servers
+    BOT.tree.clear_commands(guild=None)
+    await BOT.tree.sync()
+
+    # 2. Register your current commands specifically to your server
     BOT.tree.copy_global_to(guild=guild)
     synced = await BOT.tree.sync(guild=guild)
-    print(f"Synced {len(synced)} commands to guild {Config.GUILD_ID}")
+
+    print("Successfully cleared old global commands.")
+    print(f"Synced {len(synced)} active commands to guild {Config.GUILD_ID}")
 
 
 @BOT.tree.command(name="clean",
