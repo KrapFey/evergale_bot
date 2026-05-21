@@ -260,6 +260,138 @@ async def archive_raid_cmd(interaction: discord.Interaction,
     )
 
 
+@BOT.tree.command(name="parse-roster",
+               description="Extract Accepted and Maybe users from a Raid-Helper embed into a table")
+@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.describe(
+    message_id="The ID of the Raid-Helper message",
+    destination="The channel where the bot will post the generated tables",
+)
+async def parse_roster_cmd(interaction: discord.Interaction,
+                           message_id: str,
+                           destination: discord.TextChannel) -> None:
+    """Parses a Raid-Helper message and creates a tabular summary sent to a destination channel."""
+    log(f"[ROSTER] Initiated by @{interaction.user.name} for msg {message_id} -> To: "
+        f"#{destination.name}")
+
+    # We set ephemeral=True so the working/error messages don't clutter the chat
+    await interaction.response.defer(ephemeral=True)
+
+    source_channel = interaction.channel
+    if not isinstance(source_channel, discord.TextChannel):
+        await interaction.followup.send("This command must be run in a text channel.",
+                                        ephemeral=True)
+        return
+
+    # Fetch the message from the current channel
+    try:
+        msg_id_int = int(message_id.strip())
+        target_msg = await source_channel.fetch_message(msg_id_int)
+    except ValueError:
+        await interaction.followup.send("Message ID must be a valid number.", ephemeral=True)
+        return
+    except discord.NotFound:
+        await interaction.followup.send("Message not found in this channel. "
+                                        "Make sure you are running this command in the same "
+                                        "channel as the sign-up.", ephemeral=True)
+        return
+    except discord.HTTPException as e:
+        await interaction.followup.send(f"API Error: {e}", ephemeral=True)
+        return
+
+    # Validate it's from Raid-Helper
+    if target_msg.author.id != Config.RAID_HELPER_ID:
+        await interaction.followup.send("That message was not sent by the Raid-Helper bot.",
+                                        ephemeral=True)
+        return
+
+    if not target_msg.embeds:
+        await interaction.followup.send("That message has no embeds to parse.", ephemeral=True)
+        return
+
+    # Extract all text from the embed (Description and Fields)
+    full_text = []
+    for embed in target_msg.embeds:
+        if embed.description:
+            full_text.append(embed.description)
+        for field in embed.fields:
+            full_text.append(f"{field.name}\n{field.value}")
+
+    # Split the massive chunk of text into individual lines
+    lines = "\n".join(full_text).split("\n")
+
+    accepted = []
+    maybe = []
+    current_list = None
+
+    for line in lines:
+        # Strip invisible unicode characters that Raid-Helper uses for layout (\u200e and \u2800)
+        clean_line = line.replace("\u200e", "").replace("\u2800", "").strip()
+
+        if not clean_line:
+            continue
+
+        # Determine which section we are currently reading
+        if "Accepted" in clean_line:
+            current_list = accepted
+            continue
+        if "Maybe" in clean_line or "Tentative" in clean_line:
+            current_list = maybe
+            continue
+        if "Declined" in clean_line or "Absence" in clean_line or "Late" in clean_line:
+            current_list = None # Stop recording for these sections
+            continue
+
+        # Parse the user rows
+        if current_list is not None:
+            parts = clean_line.split(maxsplit=1)
+
+            # If the first part is a number, it's a valid roster line
+            if len(parts) == 2 and parts[0].isdigit():
+                current_list.append((parts[0], parts[1]))
+
+    if not accepted and not maybe:
+        await interaction.followup.send("Could not find any 'Accepted' or 'Maybe' "
+                                        "users in that embed.", ephemeral=True)
+        return
+
+    # Build the response using Discord Native Markdown Tables
+    response_lines = []
+
+    if accepted:
+        response_lines.append("### ✅ Accepted")
+        response_lines.append("| Slot | Name |")
+        response_lines.append("|---|---|")
+        for role, name in accepted:
+            response_lines.append(f"| {role} | {name} |")
+        response_lines.append("") # Empty line for spacing
+
+    if maybe:
+        response_lines.append("### ❔ Maybe")
+        response_lines.append("| Slot | Name |")
+        response_lines.append("|---|---|")
+        for role, name in maybe:
+            response_lines.append(f"| {role} | {name} |")
+
+    final_message = "\n".join(response_lines)
+
+    if len(final_message) > 2000:
+        final_message = final_message[:1996] + "..."
+
+    try:
+        # Send the final table message to the destination channel
+        await destination.send(final_message)
+
+        # Confirm privately to the administrator
+        await interaction.followup.send("Successfully processed roster and sent to "
+                                        f"{destination.mention}!", ephemeral=True)
+        log(f"[ROSTER] Successfully parsed roster and sent to #{destination.name}")
+    except discord.Forbidden:
+        await interaction.followup.send("I don't have permission to send messages in "
+                                        f"{destination.mention}.", ephemeral=True)
+        log(f"[ROSTER] Failed: Lacking permissions to write in #{destination.name}")
+
+
 def main() -> int:
     """Load environment and run the bot."""
     token = os.getenv("MAGIC")
