@@ -54,13 +54,13 @@ class Cleaner:
         channel_name = getattr(channel, "name", "unknown-channel")
 
         log(
-            f"[CLEAN] Initiated by @{interaction.user.name} in #{channel_name} "
+            f"[CLEAN] Initiated by @{interaction.user.display_name} in #{channel_name} "
             f"(Filter: {filter_value}, Limit: {limit}, "
             f"User: {getattr(user, 'name', 'None')})",
         )
 
         if not interaction.user.guild_permissions.manage_messages:
-            log(f"[CLEAN] Failed: @{interaction.user.name} lacks Manage Messages perm.")
+            log(f"[CLEAN] Failed: @{interaction.user.display_name} lacks Manage Messages perm.")
             await interaction.response.send_message(
                 "You need Manage Messages permission to use this.", ephemeral=True,
             )
@@ -148,7 +148,7 @@ class Cleaner:
 @BOT.event
 async def on_ready() -> None:
     """Sync commands cleanly to your specific server."""
-    log(f"Logged in as {BOT.user.name} (ID: {BOT.user.id})")
+    log(f"Logged in as {BOT.user.display_name} (ID: {BOT.user.id})")
 
     guild = discord.Object(id=Config.GUILD_ID)
 
@@ -203,7 +203,7 @@ async def archive_raid_cmd(
 ) -> None:
     """Finds multiple Raid-Helper messages, forwards them, and deletes the originals."""
     log(
-        f"[ARCHIVE] Initiated by @{interaction.user.name} | From: #{source.name} "
+        f"[ARCHIVE] Initiated by @{interaction.user.display_name} | From: #{source.name} "
         f"-> To: #{destination.name} | Tag: {tag} | Max Archive: {archive_limit} "
         f"| Scan depth: {scan_limit}",
     )
@@ -211,7 +211,7 @@ async def archive_raid_cmd(
     await interaction.response.defer(ephemeral=True)
 
     if not interaction.user.guild_permissions.manage_messages:
-        log(f"[ARCHIVE] Failed: @{interaction.user.name} lacks Manage Messages perm.")
+        log(f"[ARCHIVE] Failed: @{interaction.user.display_name} lacks Manage Messages perm.")
         await interaction.followup.send(
             "You need Manage Messages permission to use this.", ephemeral=True,
         )
@@ -298,7 +298,7 @@ async def parse_roster_cmd(
 ) -> None:
     """Parses a Raid-Helper message and creates a tabular summary sent to a channel."""
     log(
-        f"[ROSTER] Initiated by @{interaction.user.name} for msg {message_id} "
+        f"[ROSTER] Initiated by @{interaction.user.display_name} for msg {message_id} "
         f"-> To: #{destination.name}",
     )
 
@@ -447,7 +447,7 @@ async def list_members_cmd(
 ) -> None:
     """Lists server usernames directly in chat, handling Discord's character limit."""
     role_log = f" | Filter: @{role.name}" if role else ""
-    log(f"[MEMBERS] Username list requested by @{interaction.user.name}{role_log}")
+    log(f"[MEMBERS] Username list requested by @{interaction.user.display_name}{role_log}")
 
     await interaction.response.defer(ephemeral=True)
 
@@ -471,13 +471,13 @@ async def list_members_cmd(
         return
 
     # Extract ONLY the raw usernames, sorted alphabetically
-    sorted_members = sorted(members_to_list, key=lambda m: m.name.lower())
+    sorted_members = sorted(members_to_list, key=lambda m: m.display_name.lower())
 
     message_chunks = []
     current_chunk = header
 
     for member in sorted_members:
-        addition = f"{member.name}\n"
+        addition = f"{member.display_name}\n"
 
         # Discord limit is 2000. 1950 gives us a safe buffer.
         if len(current_chunk) + len(addition) > 1950:
