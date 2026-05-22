@@ -435,7 +435,7 @@ async def parse_roster_cmd(
 
 @BOT.tree.command(
     name="list-members",
-    description="List server nicknames directly in chat (optional: filter by role)",
+    description="List server nicknames and roles in a table (optional: filter by role)",
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
@@ -445,15 +445,14 @@ async def list_members_cmd(
     interaction: discord.Interaction,
     role: discord.Role | None = None,
 ) -> None:
-    """Lists server nicknames directly in chat, handling Discord's character limit."""
+    """Lists server nicknames and roles in an ephemeral markdown table."""
     role_log = f" | Filter: @{role.name}" if role else ""
-    log(f"[MEMBERS] Nickname list requested by @{interaction.user.name}{role_log}")
+    log(f"[MEMBERS] Nickname table requested by @{interaction.user.name}{role_log}")
 
-    # Remove ephemeral=True here so the bot prepares a public response
-    await interaction.response.defer()
+    # Set back to ephemeral=True so it only shows for the user who ran it
+    await interaction.response.defer(ephemeral=True)
 
     if not interaction.guild:
-        # Errors stay ephemeral to prevent chat clutter
         await interaction.followup.send(
             "This command must be run in a server.", ephemeral=True,
         )
@@ -461,43 +460,50 @@ async def list_members_cmd(
 
     # Filter members if a role is provided
     if role:
-        members_to_list = [m for m in interaction.guild.members if role in m.roles]
-        header = f"**Nicknames with role {role.name} ({len(members_to_list)}):**\n"
+        members = [m for m in interaction.guild.members if role in m.roles]
+        header = f"### Nicknames with role {role.name} ({len(members)})"
     else:
-        members_to_list = interaction.guild.members
-        header = f"**All Server Nicknames ({len(members_to_list)}):**\n"
+        members = interaction.guild.members
+        header = f"### All Server Nicknames ({len(members)})"
 
-    if not members_to_list:
+    if not members:
         msg = f"No members found with the role `{role.name}`." if role else "No members."
         await interaction.followup.send(msg, ephemeral=True)
         return
 
-    # Extract display names (nicknames), sorted alphabetically
-    sorted_members = sorted(members_to_list, key=lambda m: m.display_name.lower())
+    # Sort alphabetically by display name
+    sorted_members = sorted(members, key=lambda m: m.display_name.lower())
 
+    table_header = "| Nickname | Top Role |\n|---|---|\n"
     message_chunks = []
-    current_chunk = header
+    current_inner = table_header
 
     for member in sorted_members:
-        addition = f"{member.display_name}\n"
+        # Safely escape pipes to prevent breaking the markdown table
+        safe_name = member.display_name.replace("|", "\\|")
 
-        # Discord limit is 2000. 1950 gives us a safe buffer.
-        if len(current_chunk) + len(addition) > 1950:
-            message_chunks.append(current_chunk)
-            current_chunk = addition
+        # Grab the highest role, or display "None" if they just have @everyone
+        top_role = member.top_role.name if member.top_role.name != "@everyone" else "None"
+        safe_role = top_role.replace("|", "\\|")
+
+        addition = f"| {safe_name} | {safe_role} |\n"
+
+        # Discord limit is 2000. 1900 gives a safe buffer for the header and backticks.
+        if len(current_inner) + len(addition) > 1900:
+            message_chunks.append(f"{header}\n```markdown\n{current_inner}```")
+            current_inner = table_header + addition
         else:
-            current_chunk += addition
+            current_inner += addition
 
-    # Make sure we don't forget the last batch of names
-    if current_chunk:
-        message_chunks.append(current_chunk)
+    # Append the final leftover chunk
+    if current_inner != table_header:
+        message_chunks.append(f"{header}\n```markdown\n{current_inner}```")
 
-    # Send all chunks sequentially and PUBLICLY (ephemeral=True removed)
+    # Send all chunks sequentially
     for chunk in message_chunks:
         await interaction.followup.send(chunk, ephemeral=True)
 
-    log(f"[MEMBERS] Successfully sent {len(message_chunks)} public messages with nicknames.")
-
+    log(f"[MEMBERS] Sent {len(message_chunks)} table messages to @{interaction.user.name}.")
 
 def main() -> int:
     """Load environment and run the bot."""
