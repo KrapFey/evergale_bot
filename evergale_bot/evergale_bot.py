@@ -285,7 +285,7 @@ async def archive_raid_cmd(
 
 @BOT.tree.command(
     name="parse-roster",
-    description="Group Raid-Helper roster by roles defined in a template message",
+    description="Group Raid roster by roles (uses first letter as category, rest as tag)",
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
@@ -299,7 +299,7 @@ async def parse_roster_cmd(
     template_msg: str,
     destination: discord.TextChannel,
 ) -> None:
-    """Parses Raid roster and groups members by role using a reference table."""
+    """Parses Raid roster and groups members by the first letter of their template role."""
     log(f"[ROSTER] Initiated by @{interaction.user.name} -> To: #{destination.name}")
 
     await interaction.response.defer(ephemeral=True)
@@ -351,10 +351,8 @@ async def parse_roster_cmd(
             parts = [p.strip() for p in line.split("|")[1:-1]]
             if len(parts) >= 2:
                 nick, role = parts[0], parts[1]
-                # Skip markdown header text and structural dividers
                 if nick.lower() == "nickname" or set(nick) == {"-"}:
                     continue
-                # If role column was left blank, assign to "Unassigned"
                 template_roles[nick.lower()] = role if role else "Unassigned"
 
     if not template_roles:
@@ -406,7 +404,6 @@ async def parse_roster_cmd(
         if current_list is not None:
             match = re.match(r"^\D*?(\d+)[.,:;\s\u00A0]+(.+)$", clean_line)
             if match:
-                # We extract the name and ignore the slot number entirely
                 name = match.group(2).strip()
                 current_list.append(name)
 
@@ -416,34 +413,47 @@ async def parse_roster_cmd(
         )
         return
 
-    # 3. Group the matched members by their Template Roles
+    # 3. Process Roles: Extract the first letter as Category, the rest as a bracketed Tag
+    def process_role(name: str, raw_role: str) -> tuple[str, str]:
+        if raw_role == "Unassigned" or not raw_role:
+            return "Unassigned", name
+
+        category = raw_role[0].upper()
+        remainder = raw_role[1:].strip()
+
+        if remainder:
+            return category, f"{name} [{remainder}]"
+        return category, name
+
     acc_groups = defaultdict(list)
     may_groups = defaultdict(list)
 
     for name in accepted:
-        role = template_roles.get(name.lower(), "Unassigned")
-        acc_groups[role].append(name)
+        raw_role = template_roles.get(name.lower(), "Unassigned")
+        cat, display_name = process_role(name, raw_role)
+        acc_groups[cat].append(display_name)
 
     for name in maybe:
-        role = template_roles.get(name.lower(), "Unassigned")
-        may_groups[role].append(name)
+        raw_role = template_roles.get(name.lower(), "Unassigned")
+        cat, display_name = process_role(name, raw_role)
+        may_groups[cat].append(display_name)
 
     # 4. Build the final grouped Markdown Lists
     response_lines = []
 
     if acc_groups:
         response_lines.append("# ✅ Accepted\n")
-        for role in sorted(acc_groups.keys()):
-            response_lines.append(f"### {role}")
-            for name in acc_groups[role]:
+        for role_cat in sorted(acc_groups.keys()):
+            response_lines.append(f"### {role_cat}")
+            for name in acc_groups[role_cat]:
                 response_lines.append(f"- {name}")
             response_lines.append("")
 
     if may_groups:
         response_lines.append("# ❔ Maybe\n")
-        for role in sorted(may_groups.keys()):
-            response_lines.append(f"### {role}")
-            for name in may_groups[role]:
+        for role_cat in sorted(may_groups.keys()):
+            response_lines.append(f"### {role_cat}")
+            for name in may_groups[role_cat]:
                 response_lines.append(f"- {name}")
             response_lines.append("")
 
