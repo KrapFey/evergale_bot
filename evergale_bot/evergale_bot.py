@@ -5,6 +5,7 @@ import datetime
 import os
 import re
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import discord
@@ -284,22 +285,24 @@ async def archive_raid_cmd(
 
 @BOT.tree.command(
     name="parse-roster",
-    description="Extract Accepted and Maybe users from a Raid-Helper embed into a table",
+    description="Group Raid-Helper roster by roles defined in a template message",
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
-    message_id="The ID of the Raid-Helper message",
-    destination="The channel where the bot will post the generated tables",
+    raid_msg_id="The ID of the Raid-Helper message",
+    template_msg_id="The ID of the filled template table message",
+    destination="The channel where the bot will post the grouped tables",
 )
 async def parse_roster_cmd(
     interaction: discord.Interaction,
-    message_id: str,
+    raid_msg_id: str,
+    template_msg_id: str,
     destination: discord.TextChannel,
 ) -> None:
-    """Parses a Raid-Helper message and creates a tabular summary sent to a channel."""
+    """Parses Raid roster and groups members by role using a reference table."""
     log(
-        f"[ROSTER] Initiated by @{interaction.user.display_name} for msg {message_id} "
-        f"-> To: #{destination.name}",
+        f"[ROSTER] Initiated by @{interaction.user.name} for Raid: {raid_msg_id} "
+        f"| Template: {template_msg_id} -> To: #{destination.name}",
     )
 
     await interaction.response.defer(ephemeral=True)
@@ -311,29 +314,54 @@ async def parse_roster_cmd(
         )
         return
 
+    # Fetch both messages
     try:
-        msg_id_int = int(message_id.strip())
-        target_msg = await source_channel.fetch_message(msg_id_int)
+        r_id = int(raid_msg_id.strip())
+        t_id = int(template_msg_id.strip())
+        raid_msg = await source_channel.fetch_message(r_id)
+        template_msg = await source_channel.fetch_message(t_id)
     except ValueError:
-        await interaction.followup.send("Message ID must be a valid number.", ephemeral=True)
+        await interaction.followup.send("Message IDs must be valid numbers.", ephemeral=True)
         return
     except discord.NotFound:
         await interaction.followup.send(
-            "Message not found in this channel. Check the ID.", ephemeral=True,
+            "One or both messages not found in this channel.", ephemeral=True,
         )
         return
     except discord.HTTPException as e:
         await interaction.followup.send(f"API Error: {e}", ephemeral=True)
         return
 
-    if target_msg.author.id != Config.RAID_HELPER_ID:
+    if raid_msg.author.id != Config.RAID_HELPER_ID:
         await interaction.followup.send(
-            "That message was not sent by the Raid-Helper bot.", ephemeral=True,
+            "The Raid message ID was not sent by the Raid-Helper bot.", ephemeral=True,
         )
         return
 
-    raw_text_blocks = [target_msg.content]
-    for embed in target_msg.embeds:
+    # 1. Parse the Template Message to map Nicknames -> Roles
+    template_roles = {}
+    for line in template_msg.content.split("\n"):
+        line = line.strip()
+        # Look for markdown table rows
+        if line.startswith("|") and line.endswith("|"):
+            parts = [p.strip() for p in line.split("|")[1:-1]]
+            if len(parts) >= 2:
+                nick, role = parts[0], parts[1]
+                # Skip markdown header text and structural dividers
+                if nick.lower() == "nickname" or set(nick) == {"-"}:
+                    continue
+                # If role column was left blank, assign to "Unassigned"
+                template_roles[nick.lower()] = role if role else "Unassigned"
+
+    if not template_roles:
+        await interaction.followup.send(
+            "Could not find a valid populated table in the template message.", ephemeral=True,
+        )
+        return
+
+    # 2. Parse the Raid-Helper Message
+    raw_text_blocks = [raid_msg.content]
+    for embed in raid_msg.embeds:
         if embed.title:
             raw_text_blocks.append(embed.title)
         if embed.description:
@@ -343,19 +371,16 @@ async def parse_roster_cmd(
             raw_text_blocks.append(field.value)
 
     raw_text = "\n".join(filter(None, raw_text_blocks))
-
-    # Clean text: remove custom emojis and markdown
     text_no_emojis = re.sub(r"<a?:\w+:\d+>", "", raw_text)
     text_cleaned = re.sub(r"[*_`~]", "", text_no_emojis)
 
     lines = text_cleaned.split("\n")
     accepted, maybe = [], []
     current_list = None
-
-    strip_pattern = r"^[\s\u2000-\u200F\u2800\uFEFF\u00A0]+|[\s\u2000-\u200F\u2800\uFEFF\u00A0]+$"
+    strip_pat = r"^[\s\u2000-\u200F\u2800\uFEFF\u00A0]+|[\s\u2000-\u200F\u2800\uFEFF\u00A0]+$"
 
     for line in lines:
-        clean_line = re.sub(strip_pattern, "", line)
+        clean_line = re.sub(strip_pat, "", line)
         if not clean_line:
             continue
 
@@ -383,34 +408,48 @@ async def parse_roster_cmd(
 
     if not accepted and not maybe:
         await interaction.followup.send(
-            "Could not find any 'Accepted' or 'Maybe' users. "
-            "The embed might be empty or formatted unusually.",
-            ephemeral=True,
+            "Could not find any users in the Raid message.", ephemeral=True,
         )
-        log(f"[ROSTER] Failed: Found no users for {message_id}. Regex bypassed.")
         return
 
-    # Build the response using Discord Native Markdown Tables
+    # 3. Group the matched members by their Template Roles
+    acc_groups = defaultdict(list)
+    may_groups = defaultdict(list)
+
+    for slot, name in accepted:
+        # Cross-reference the dictionary (case-insensitive). Default to Unassigned.
+        role = template_roles.get(name.lower(), "Unassigned")
+        acc_groups[role].append((slot, name))
+
+    for slot, name in maybe:
+        role = template_roles.get(name.lower(), "Unassigned")
+        may_groups[role].append((slot, name))
+
+    # 4. Build the final grouped Markdown Tables
     response_lines = []
-    if accepted:
-        response_lines.extend(["# ✅ Accepted", "| Slot | Name |", "|---|---|"])
-        for role, name in accepted:
-            response_lines.append(f"| {role} | {name} |")
-        response_lines.append("")
 
-    if maybe:
-        response_lines.extend(["# ❔ Maybe", "| Slot | Name |", "|---|---|"])
-        for role, name in maybe:
-            response_lines.append(f"| {role} | {name} |")
+    if acc_groups:
+        response_lines.append("# ✅ Accepted\n")
+        # Sort roles alphabetically so the output is consistent
+        for role in sorted(acc_groups.keys()):
+            response_lines.append(f"### {role}")
+            response_lines.extend(["| Slot | Name |", "|---|---|"])
+            for slot, name in acc_groups[role]:
+                response_lines.append(f"| {slot} | {name} |")
+            response_lines.append("")
 
-    # Combine everything into a single string
+    if may_groups:
+        response_lines.append("# ❔ Maybe\n")
+        for role in sorted(may_groups.keys()):
+            response_lines.append(f"### {role}")
+            response_lines.extend(["| Slot | Name |", "|---|---|"])
+            for slot, name in may_groups[role]:
+                response_lines.append(f"| {slot} | {name} |")
+            response_lines.append("")
+
     inner_text = "\n".join(response_lines)
-
-    # Wrap it in a markdown codeblock
     final_message = f"```markdown\n{inner_text}\n```"
 
-    # Ensure it doesn't break Discord's 2000 character limit
-    # If it's too long, truncate the text INSIDE so we don't lose the closing backticks
     if len(final_message) > 2000:
         safe_inner = inner_text[:1980] + "..."
         final_message = f"```markdown\n{safe_inner}\n```"
@@ -421,17 +460,13 @@ async def parse_roster_cmd(
             f"Successfully processed roster and sent to {destination.mention}!",
             ephemeral=True,
         )
-        log(
-            f"[ROSTER] Successfully parsed roster and sent to #{destination.name} "
-            f"({len(accepted)} Accepted, {len(maybe)} Maybe)",
-        )
+        log(f"[ROSTER] Successfully parsed roster and sent to #{destination.name}")
     except discord.Forbidden:
         await interaction.followup.send(
-            f"I don't have permission to send messages in {destination.mention}.",
+            f"I lack permissions to send messages in {destination.mention}.",
             ephemeral=True,
         )
         log(f"[ROSTER] Failed: Lacking permissions to write in #{destination.name}")
-
 
 @BOT.tree.command(
     name="list-members",
