@@ -289,60 +289,66 @@ async def archive_raid_cmd(
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
-    raid_msg_id="The ID of the Raid-Helper message",
-    template_msg_id="The ID of the filled template table message",
+    raid_msg="Message ID or Link for the Raid-Helper signup",
+    template_msg="Message ID or Link for the filled template table",
     destination="The channel where the bot will post the grouped tables",
 )
 async def parse_roster_cmd(
     interaction: discord.Interaction,
-    raid_msg_id: str,
-    template_msg_id: str,
+    raid_msg: str,
+    template_msg: str,
     destination: discord.TextChannel,
 ) -> None:
     """Parses Raid roster and groups members by role using a reference table."""
-    log(
-        f"[ROSTER] Initiated by @{interaction.user.name} for Raid: {raid_msg_id} "
-        f"| Template: {template_msg_id} -> To: #{destination.name}",
-    )
+    log(f"[ROSTER] Initiated by @{interaction.user.name} -> To: #{destination.name}")
 
     await interaction.response.defer(ephemeral=True)
 
-    source_channel = interaction.channel
-    if not isinstance(source_channel, discord.TextChannel):
+    if not interaction.guild:
+        await interaction.followup.send("Must be run in a server.", ephemeral=True)
+        return
+
+    # Helper function to smartly fetch messages using either a Link or an ID
+    async def get_msg(input_str: str) -> discord.Message | None:
+        input_str = input_str.strip()
+        try:
+            # If the user pasted a Discord Message Link
+            if "discord.com/channels/" in input_str:
+                parts = input_str.split("/")
+                ch_id, m_id = int(parts[-2]), int(parts[-1])
+                channel = interaction.guild.get_channel(ch_id)
+                if not channel:
+                    channel = await interaction.guild.fetch_channel(ch_id)
+
+                if isinstance(channel, discord.TextChannel):
+                    return await channel.fetch_message(m_id)
+                return None
+            # If the user pasted a plain ID (assumes current channel)
+            return await interaction.channel.fetch_message(int(input_str))
+        except Exception:
+            return None
+
+    # Fetch both messages from wherever they are in the server
+    r_msg = await get_msg(raid_msg)
+    t_msg = await get_msg(template_msg)
+
+    if not r_msg or not t_msg:
         await interaction.followup.send(
-            "This command must be run in a text channel.", ephemeral=True,
+            "Could not find one or both messages. Try pasting the full Message Link.",
+            ephemeral=True,
         )
         return
 
-    # Fetch both messages
-    try:
-        r_id = int(raid_msg_id.strip())
-        t_id = int(template_msg_id.strip())
-        raid_msg = await source_channel.fetch_message(r_id)
-        template_msg = await source_channel.fetch_message(t_id)
-    except ValueError:
-        await interaction.followup.send("Message IDs must be valid numbers.", ephemeral=True)
-        return
-    except discord.NotFound:
+    if r_msg.author.id != Config.RAID_HELPER_ID:
         await interaction.followup.send(
-            "One or both messages not found in this channel.", ephemeral=True,
-        )
-        return
-    except discord.HTTPException as e:
-        await interaction.followup.send(f"API Error: {e}", ephemeral=True)
-        return
-
-    if raid_msg.author.id != Config.RAID_HELPER_ID:
-        await interaction.followup.send(
-            "The Raid message ID was not sent by the Raid-Helper bot.", ephemeral=True,
+            "The Raid message was not sent by the Raid-Helper bot.", ephemeral=True,
         )
         return
 
     # 1. Parse the Template Message to map Nicknames -> Roles
     template_roles = {}
-    for line in template_msg.content.split("\n"):
+    for line in t_msg.content.split("\n"):
         line = line.strip()
-        # Look for markdown table rows
         if line.startswith("|") and line.endswith("|"):
             parts = [p.strip() for p in line.split("|")[1:-1]]
             if len(parts) >= 2:
@@ -360,8 +366,8 @@ async def parse_roster_cmd(
         return
 
     # 2. Parse the Raid-Helper Message
-    raw_text_blocks = [raid_msg.content]
-    for embed in raid_msg.embeds:
+    raw_text_blocks = [r_msg.content]
+    for embed in r_msg.embeds:
         if embed.title:
             raw_text_blocks.append(embed.title)
         if embed.description:
@@ -417,7 +423,6 @@ async def parse_roster_cmd(
     may_groups = defaultdict(list)
 
     for slot, name in accepted:
-        # Cross-reference the dictionary (case-insensitive). Default to Unassigned.
         role = template_roles.get(name.lower(), "Unassigned")
         acc_groups[role].append((slot, name))
 
@@ -430,7 +435,6 @@ async def parse_roster_cmd(
 
     if acc_groups:
         response_lines.append("# ✅ Accepted\n")
-        # Sort roles alphabetically so the output is consistent
         for role in sorted(acc_groups.keys()):
             response_lines.append(f"### {role}")
             response_lines.extend(["| Slot | Name |", "|---|---|"])
