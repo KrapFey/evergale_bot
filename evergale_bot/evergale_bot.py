@@ -494,7 +494,7 @@ async def list_members_cmd(
 
     # Send all chunks sequentially and PUBLICLY (ephemeral=True removed)
     for chunk in message_chunks:
-        await interaction.followup.send(chunk)
+        await interaction.followup.send(chunk, ephemeral=True)
 
     log(f"[MEMBERS] Successfully sent {len(message_chunks)} public messages with nicknames.")
 
