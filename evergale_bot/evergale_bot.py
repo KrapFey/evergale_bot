@@ -433,6 +433,70 @@ async def parse_roster_cmd(
         log(f"[ROSTER] Failed: Lacking permissions to write in #{destination.name}")
 
 
+@BOT.tree.command(
+    name="list-members",
+    description="List server usernames directly in chat (optional: filter by role)",
+)
+@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.describe(
+    role="Only list members who have this specific role",
+)
+async def list_members_cmd(
+    interaction: discord.Interaction,
+    role: discord.Role | None = None,
+) -> None:
+    """Lists server usernames directly in chat, handling Discord's character limit."""
+    role_log = f" | Filter: @{role.name}" if role else ""
+    log(f"[MEMBERS] Username list requested by @{interaction.user.name}{role_log}")
+
+    await interaction.response.defer(ephemeral=True)
+
+    if not interaction.guild:
+        await interaction.followup.send(
+            "This command must be run in a server.", ephemeral=True,
+        )
+        return
+
+    # Filter members if a role is provided
+    if role:
+        members_to_list = [m for m in interaction.guild.members if role in m.roles]
+        header = f"**Usernames with role {role.name} ({len(members_to_list)}):**\n"
+    else:
+        members_to_list = interaction.guild.members
+        header = f"**All Server Usernames ({len(members_to_list)}):**\n"
+
+    if not members_to_list:
+        msg = f"No members found with the role `{role.name}`." if role else "No members."
+        await interaction.followup.send(msg, ephemeral=True)
+        return
+
+    # Extract ONLY the raw usernames, sorted alphabetically
+    sorted_members = sorted(members_to_list, key=lambda m: m.name.lower())
+
+    message_chunks = []
+    current_chunk = header
+
+    for member in sorted_members:
+        addition = f"{member.name}\n"
+
+        # Discord limit is 2000. 1950 gives us a safe buffer.
+        if len(current_chunk) + len(addition) > 1950:
+            message_chunks.append(current_chunk)
+            current_chunk = addition
+        else:
+            current_chunk += addition
+
+    # Make sure we don't forget the last batch of names
+    if current_chunk:
+        message_chunks.append(current_chunk)
+
+    # Send all chunks sequentially
+    for chunk in message_chunks:
+        await interaction.followup.send(chunk, ephemeral=True)
+
+    log(f"[MEMBERS] Successfully sent {len(message_chunks)} messages with usernames.")
+
+
 def main() -> int:
     """Load environment and run the bot."""
     token = os.getenv("MAGIC")
