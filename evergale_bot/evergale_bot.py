@@ -5,6 +5,7 @@ import datetime
 import os
 import re
 import sys
+from pathlib import Path
 
 import discord
 from discord.ext import commands
@@ -24,7 +25,10 @@ BOT = commands.Bot(command_prefix="!", intents=INTENTS)
 def log(message: str) -> None:
     """Helper to print nicely formatted and timestamped console logs."""
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now}] 🤖 {message}")
+    formatted_msg = f"[{now}] 🤖 {message}"
+    print(formatted_msg)
+    with Path("app.log").open("a", encoding="utf-8") as f:
+            f.write(formatted_msg + "\n")
 
 
 class Config:
