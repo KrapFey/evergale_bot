@@ -285,7 +285,7 @@ async def archive_raid_cmd(
 
 @BOT.tree.command(
     name="parse-roster",
-    description="Group Raid roster into Discord Embeds with stretched columns",
+    description="Group Raid roster into Discord Embeds with stretched columns and sorted names",
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
@@ -299,7 +299,7 @@ async def parse_roster_cmd(
     template_msg: str,
     destination: discord.TextChannel,
 ) -> None:
-    """Parses Raid roster and groups members into side-by-side Embed columns."""
+    """Parses Raid roster, groups members by role, and sorts names alphabetically in Embeds."""
     log(f"[ROSTER] Initiated by @{interaction.user.name} -> To: #{destination.name}")
 
     await interaction.response.defer(ephemeral=True)
@@ -389,7 +389,6 @@ async def parse_roster_cmd(
 
     raw_text = "\n".join(filter(None, raw_text_blocks))
 
-    # Safely strip custom emojis first, then markdown
     text_no_emojis = re.sub(r"<a?:\w+:\d+>", "", raw_text)
     text_cleaned = re.sub(r"[*_`~]", "", text_no_emojis)
 
@@ -430,7 +429,7 @@ async def parse_roster_cmd(
         )
         return
 
-    # 3. Process Roles (Splits at first space or parenthesis)
+    # 3. Process Roles
     def process_role(name: str, raw_role: str) -> tuple[str, str]:
         if raw_role == "Unassigned" or not raw_role:
             return "Unassigned", name
@@ -458,29 +457,28 @@ async def parse_roster_cmd(
         cat, display_name = process_role(name, raw_role)
         may_groups[cat].append(display_name)
 
-    # 4. Build the final Embeds with Invisible Spacers
+    # 4. Build the final Embeds with Sorted Names and Invisible Spacers
     embeds = []
 
-    # Invisible Braille spaces to force column widening and embed stretching
-    column_padding = "\u2800" * 12
-    embed_stretcher = "\u2800" * 60
+    COL_PAD = "\u2800" * 12  # noqa: N806
+    EMBED_STRETCHER = "\u2800" * 60  # noqa: N806
 
     if acc_groups:
         total_acc = sum(len(m) for m in acc_groups.values())
         em_acc = discord.Embed(title=f"✅ Accepted ({total_acc})", color=discord.Color.green())
 
         for role_cat in sorted(acc_groups.keys()):
-            members = acc_groups[role_cat]
-            val = "\n".join(f"- {m}" for m in members)
+            # Sort the names alphabetically (case-insensitive)
+            sorted_members = sorted(acc_groups[role_cat], key=lambda m: m.lower())
+
+            val = "\n".join(f"- {m}" for m in sorted_members)
             if len(val) > 1024:
                 val = val[:1020] + "..."
 
-            # Inject invisible padding into the column header
-            padded_title = f"**{role_cat} ({len(members)})** {column_padding}"
+            padded_title = f"**{role_cat} ({len(sorted_members)})** {COL_PAD}"
             em_acc.add_field(name=padded_title, value=val, inline=True)
 
-        # Inject massive invisible string into the footer to force maximum width
-        em_acc.set_footer(text=embed_stretcher)
+        em_acc.set_footer(text=EMBED_STRETCHER)
         embeds.append(em_acc)
 
     if may_groups:
@@ -488,15 +486,17 @@ async def parse_roster_cmd(
         em_may = discord.Embed(title=f"❔ Maybe ({total_may})", color=discord.Color.gold())
 
         for role_cat in sorted(may_groups.keys()):
-            members = may_groups[role_cat]
-            val = "\n".join(f"- {m}" for m in members)
+            # Sort the names alphabetically (case-insensitive)
+            sorted_members = sorted(may_groups[role_cat], key=lambda m: m.lower())
+
+            val = "\n".join(f"- {m}" for m in sorted_members)
             if len(val) > 1024:
                 val = val[:1020] + "..."
 
-            padded_title = f"**{role_cat} ({len(members)})** {column_padding}"
+            padded_title = f"**{role_cat} ({len(sorted_members)})** {COL_PAD}"
             em_may.add_field(name=padded_title, value=val, inline=True)
 
-        em_may.set_footer(text=embed_stretcher)
+        em_may.set_footer(text=EMBED_STRETCHER)
         embeds.append(em_may)
 
     try:
@@ -512,7 +512,6 @@ async def parse_roster_cmd(
             ephemeral=True,
         )
         log(f"[ROSTER] Failed: Lacking permissions to write in #{destination.name}")
-
 @BOT.tree.command(
     name="list-members",
     description="List server nicknames in a blank table (optional: filter by role)",
