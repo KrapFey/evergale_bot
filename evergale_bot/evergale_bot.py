@@ -285,13 +285,13 @@ async def archive_raid_cmd(
 
 @BOT.tree.command(
     name="parse-roster",
-    description="Group Raid roster by roles (uses first letter as category, rest as tag)",
+    description="Group Raid roster into Discord Embeds with side-by-side columns",
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
     raid_msg="Message ID or Link for the Raid-Helper signup",
     template_msg="Message ID or Link for the filled template table",
-    destination="The channel where the bot will post the grouped lists",
+    destination="The channel where the bot will post the embeds",
 )
 async def parse_roster_cmd(
     interaction: discord.Interaction,
@@ -299,7 +299,7 @@ async def parse_roster_cmd(
     template_msg: str,
     destination: discord.TextChannel,
 ) -> None:
-    """Parses Raid roster and groups members by the first letter of their template role."""
+    """Parses Raid roster and groups members into side-by-side Embed columns."""
     log(f"[ROSTER] Initiated by @{interaction.user.name} -> To: #{destination.name}")
 
     await interaction.response.defer(ephemeral=True)
@@ -326,7 +326,6 @@ async def parse_roster_cmd(
         except Exception:
             return None
 
-    # Fetch both messages from wherever they are in the server
     r_msg = await get_msg(raid_msg)
     t_msg = await get_msg(template_msg)
 
@@ -373,8 +372,7 @@ async def parse_roster_cmd(
             raw_text_blocks.append(field.value)
 
     raw_text = "\n".join(filter(None, raw_text_blocks))
-    text_no_emojis = re.sub(r"<a?:\w+:\d+>", "", raw_text)
-    text_cleaned = re.sub(r"[*_`~]", "", text_no_emojis)
+    text_cleaned = re.sub(r"[*_`~<a?:\w+:\d+>]", "", raw_text)
 
     lines = text_cleaned.split("\n")
     accepted, maybe = [], []
@@ -413,17 +411,21 @@ async def parse_roster_cmd(
         )
         return
 
-    # 3. Process Roles: Extract the first letter as Category, the rest as a bracketed Tag
+    # 3. Process Roles (Splits at first space or parenthesis)
     def process_role(name: str, raw_role: str) -> tuple[str, str]:
         if raw_role == "Unassigned" or not raw_role:
             return "Unassigned", name
 
-        category = raw_role[0].upper()
-        remainder = raw_role[1:].strip()
+        match = re.match(r"^([^\s\(]+)(.*)$", raw_role.strip())
+        if match:
+            category = match.group(1).strip()
+            # Strip trailing/leading spaces and parens from the tag
+            remainder = match.group(2).strip(" ()")
 
-        if remainder:
-            return category, f"{name} [{remainder}]"
-        return category, name
+            if remainder:
+                return category, f"{name} ({remainder})"
+            return category, name
+        return raw_role, name
 
     acc_groups = defaultdict(list)
     may_groups = defaultdict(list)
@@ -438,34 +440,39 @@ async def parse_roster_cmd(
         cat, display_name = process_role(name, raw_role)
         may_groups[cat].append(display_name)
 
-    # 4. Build the final grouped Markdown Lists
-    response_lines = []
+    # 4. Build the final Embeds
+    embeds = []
 
     if acc_groups:
-        response_lines.append("# ✅ Accepted\n")
+        total_acc = sum(len(m) for m in acc_groups.values())
+        em_acc = discord.Embed(title=f"✅ Accepted ({total_acc})", color=discord.Color.green())
+
         for role_cat in sorted(acc_groups.keys()):
-            response_lines.append(f"### {role_cat}")
-            for name in acc_groups[role_cat]:
-                response_lines.append(f"- {name}")
-            response_lines.append("")
+            members = acc_groups[role_cat]
+            val = "\n".join(f"- {m}" for m in members)
+            # Prevent Discord's 1024-character field limit from crashing the bot
+            if len(val) > 1024:
+                val = val[:1020] + "..."
+            em_acc.add_field(name=f"**{role_cat} ({len(members)})**", value=val, inline=True)
+
+        embeds.append(em_acc)
 
     if may_groups:
-        response_lines.append("# ❔ Maybe\n")
+        total_may = sum(len(m) for m in may_groups.values())
+        em_may = discord.Embed(title=f"❔ Maybe ({total_may})", color=discord.Color.gold())
+
         for role_cat in sorted(may_groups.keys()):
-            response_lines.append(f"### {role_cat}")
-            for name in may_groups[role_cat]:
-                response_lines.append(f"- {name}")
-            response_lines.append("")
+            members = may_groups[role_cat]
+            val = "\n".join(f"- {m}" for m in members)
+            if len(val) > 1024:
+                val = val[:1020] + "..."
+            em_may.add_field(name=f"**{role_cat} ({len(members)})**", value=val, inline=True)
 
-    inner_text = "\n".join(response_lines)
-    final_message = f"```markdown\n{inner_text}\n```"
-
-    if len(final_message) > 2000:
-        safe_inner = inner_text[:1980] + "..."
-        final_message = f"```markdown\n{safe_inner}\n```"
+        embeds.append(em_may)
 
     try:
-        await destination.send(final_message)
+        # Send all generated embeds in a single beautiful message
+        await destination.send(embeds=embeds)
         await interaction.followup.send(
             f"Successfully processed roster and sent to {destination.mention}!",
             ephemeral=True,
@@ -473,7 +480,7 @@ async def parse_roster_cmd(
         log(f"[ROSTER] Successfully parsed roster and sent to #{destination.name}")
     except discord.Forbidden:
         await interaction.followup.send(
-            f"I lack permissions to send messages in {destination.mention}.",
+            f"I lack permissions to send embeds in {destination.mention}.",
             ephemeral=True,
         )
         log(f"[ROSTER] Failed: Lacking permissions to write in #{destination.name}")
