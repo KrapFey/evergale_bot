@@ -372,7 +372,11 @@ async def parse_roster_cmd(
             raw_text_blocks.append(field.value)
 
     raw_text = "\n".join(filter(None, raw_text_blocks))
-    text_cleaned = re.sub(r"[*_`~<a?:\w+:\d+>]", "", raw_text)
+
+    # Safely strip custom emojis (<:name:id>) first
+    text_no_emojis = re.sub(r"<a?:\w+:\d+>", "", raw_text)
+    # Then safely strip markdown formatting
+    text_cleaned = re.sub(r"[*_`~]", "", text_no_emojis)
 
     lines = text_cleaned.split("\n")
     accepted, maybe = [], []
