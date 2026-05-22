@@ -435,7 +435,7 @@ async def parse_roster_cmd(
 
 @BOT.tree.command(
     name="list-members",
-    description="List server nicknames and roles in a table (optional: filter by role)",
+    description="List server nicknames in a blank table (optional: filter by role)",
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
@@ -445,11 +445,10 @@ async def list_members_cmd(
     interaction: discord.Interaction,
     role: discord.Role | None = None,
 ) -> None:
-    """Lists server nicknames and roles in an ephemeral markdown table."""
+    """Lists server nicknames in an ephemeral markdown table with a blank Role column."""
     role_log = f" | Filter: @{role.name}" if role else ""
-    log(f"[MEMBERS] Nickname table requested by @{interaction.user.name}{role_log}")
+    log(f"[MEMBERS] Blank table requested by @{interaction.user.name}{role_log}")
 
-    # Set back to ephemeral=True so it only shows for the user who ran it
     await interaction.response.defer(ephemeral=True)
 
     if not interaction.guild:
@@ -474,36 +473,44 @@ async def list_members_cmd(
     # Sort alphabetically by display name
     sorted_members = sorted(members, key=lambda m: m.display_name.lower())
 
-    table_header = "| Nickname | Top Role |\n|---|---|\n"
-    message_chunks = []
-    current_inner = table_header
+    # Step 1: Pre-process data and find the maximum column width for nicknames
+    parsed_names = []
+    max_nick_len = len("Nickname")
+    role_col_width = len("Role")  # Matches exactly to the word "Role"
 
     for member in sorted_members:
-        # Safely escape pipes to prevent breaking the markdown table
-        safe_name = member.display_name.replace("|", "\\|")
+        clean_name = member.display_name.replace("|", "\\|")
+        max_nick_len = max(max_nick_len, len(clean_name))
+        parsed_names.append(clean_name)
 
-        # Grab the highest role, or display "None" if they just have @everyone
-        top_role = member.top_role.name if member.top_role.name != "@everyone" else "None"
-        safe_role = top_role.replace("|", "\\|")
+    # Step 2: Build dynamic headers using the calculated widths
+    table_header = f"| {'Nickname'.ljust(max_nick_len)} | {'Role'.ljust(role_col_width)} |\n"
+    table_divider = f"|{'-' * (max_nick_len + 2)}|{'-' * (role_col_width + 2)}|\n"
 
-        addition = f"| {safe_name} | {safe_role} |\n"
+    base_table = table_header + table_divider
+    message_chunks = []
+    current_inner = base_table
 
-        # Discord limit is 2000. 1900 gives a safe buffer for the header and backticks.
+    # Step 3: Build the rows using precise spacing padding and an empty role column
+    for name in parsed_names:
+        addition = f"| {name.ljust(max_nick_len)} | {' ' * role_col_width} |\n"
+
+        # Discord limit is 2000. 1900 gives a safe buffer.
         if len(current_inner) + len(addition) > 1900:
             message_chunks.append(f"{header}\n```markdown\n{current_inner}```")
-            current_inner = table_header + addition
+            current_inner = base_table + addition
         else:
             current_inner += addition
 
     # Append the final leftover chunk
-    if current_inner != table_header:
+    if current_inner != base_table:
         message_chunks.append(f"{header}\n```markdown\n{current_inner}```")
 
     # Send all chunks sequentially
     for chunk in message_chunks:
         await interaction.followup.send(chunk, ephemeral=True)
 
-    log(f"[MEMBERS] Sent {len(message_chunks)} table messages to @{interaction.user.name}.")
+    log(f"[MEMBERS] Sent {len(message_chunks)} blank table messages to @{interaction.user.name}.")
 
 def main() -> int:
     """Load environment and run the bot."""
