@@ -285,7 +285,7 @@ async def archive_raid_cmd(
 
 @BOT.tree.command(
     name="parse-roster",
-    description="Group Raid roster into Discord Embeds with side-by-side columns",
+    description="Group Raid roster into Discord Embeds with stretched columns",
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
@@ -309,29 +309,45 @@ async def parse_roster_cmd(
         return
 
     # Helper function to smartly fetch messages using either a Link or an ID
-    async def get_msg(input_str: str) -> discord.Message | None:
+    async def get_msg(input_str: str, label: str) -> discord.Message | None:
         input_str = input_str.strip()
         try:
             if "discord.com/channels/" in input_str:
                 parts = input_str.split("/")
                 ch_id, m_id = int(parts[-2]), int(parts[-1])
+
                 channel = interaction.guild.get_channel(ch_id)
                 if not channel:
-                    channel = await interaction.guild.fetch_channel(ch_id)
+                    try:
+                        channel = await interaction.guild.fetch_channel(ch_id)
+                    except discord.NotFound:
+                        log(f"[ROSTER] Error: {label} channel {ch_id} not found.")
+                        return None
+                    except discord.Forbidden:
+                        log(f"[ROSTER] Error: Bot lacks permission to view {label} ch {ch_id}.")
+                        return None
 
-                if isinstance(channel, discord.TextChannel):
-                    return await channel.fetch_message(m_id)
-                return None
-            return await interaction.channel.fetch_message(int(input_str))
-        except Exception:
+                if hasattr(channel, "fetch_message"):
+                    try:
+                        return await channel.fetch_message(m_id)
+                    except discord.NotFound:
+                        log(f"[ROSTER] Error: {label} message {m_id} not found in channel {ch_id}.")
+                        return None
+                else:
+                    log(f"[ROSTER] Error: {label} channel {ch_id} does not support messages.")
+                    return None
+            else:
+                return await interaction.channel.fetch_message(int(input_str))
+        except Exception as e:
+            log(f"[ROSTER] Exception while fetching {label} message: {e}")
             return None
 
-    r_msg = await get_msg(raid_msg)
-    t_msg = await get_msg(template_msg)
+    r_msg = await get_msg(raid_msg, "Raid")
+    t_msg = await get_msg(template_msg, "Template")
 
     if not r_msg or not t_msg:
         await interaction.followup.send(
-            "Could not find one or both messages. Try pasting the full Message Link.",
+            "Could not find one or both messages. Check your console log for exact errors.",
             ephemeral=True,
         )
         return
@@ -373,9 +389,8 @@ async def parse_roster_cmd(
 
     raw_text = "\n".join(filter(None, raw_text_blocks))
 
-    # Safely strip custom emojis (<:name:id>) first
+    # Safely strip custom emojis first, then markdown
     text_no_emojis = re.sub(r"<a?:\w+:\d+>", "", raw_text)
-    # Then safely strip markdown formatting
     text_cleaned = re.sub(r"[*_`~]", "", text_no_emojis)
 
     lines = text_cleaned.split("\n")
@@ -423,7 +438,6 @@ async def parse_roster_cmd(
         match = re.match(r"^([^\s\(]+)(.*)$", raw_role.strip())
         if match:
             category = match.group(1).strip()
-            # Strip trailing/leading spaces and parens from the tag
             remainder = match.group(2).strip(" ()")
 
             if remainder:
@@ -444,8 +458,12 @@ async def parse_roster_cmd(
         cat, display_name = process_role(name, raw_role)
         may_groups[cat].append(display_name)
 
-    # 4. Build the final Embeds
+    # 4. Build the final Embeds with Invisible Spacers
     embeds = []
+
+    # Invisible Braille spaces to force column widening and embed stretching
+    column_padding = "\u2800" * 12
+    embed_stretcher = "\u2800" * 60
 
     if acc_groups:
         total_acc = sum(len(m) for m in acc_groups.values())
@@ -454,11 +472,15 @@ async def parse_roster_cmd(
         for role_cat in sorted(acc_groups.keys()):
             members = acc_groups[role_cat]
             val = "\n".join(f"- {m}" for m in members)
-            # Prevent Discord's 1024-character field limit from crashing the bot
             if len(val) > 1024:
                 val = val[:1020] + "..."
-            em_acc.add_field(name=f"**{role_cat} ({len(members)})**", value=val, inline=True)
 
+            # Inject invisible padding into the column header
+            padded_title = f"**{role_cat} ({len(members)})** {column_padding}"
+            em_acc.add_field(name=padded_title, value=val, inline=True)
+
+        # Inject massive invisible string into the footer to force maximum width
+        em_acc.set_footer(text=embed_stretcher)
         embeds.append(em_acc)
 
     if may_groups:
@@ -470,12 +492,14 @@ async def parse_roster_cmd(
             val = "\n".join(f"- {m}" for m in members)
             if len(val) > 1024:
                 val = val[:1020] + "..."
-            em_may.add_field(name=f"**{role_cat} ({len(members)})**", value=val, inline=True)
 
+            padded_title = f"**{role_cat} ({len(members)})** {column_padding}"
+            em_may.add_field(name=padded_title, value=val, inline=True)
+
+        em_may.set_footer(text=embed_stretcher)
         embeds.append(em_may)
 
     try:
-        # Send all generated embeds in a single beautiful message
         await destination.send(embeds=embeds)
         await interaction.followup.send(
             f"Successfully processed roster and sent to {destination.mention}!",
@@ -488,7 +512,6 @@ async def parse_roster_cmd(
             ephemeral=True,
         )
         log(f"[ROSTER] Failed: Lacking permissions to write in #{destination.name}")
-
 
 @BOT.tree.command(
     name="list-members",
