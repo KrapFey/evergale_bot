@@ -291,7 +291,7 @@ async def archive_raid_cmd(
 @discord.app_commands.describe(
     raid_msg="Message ID or Link for the Raid-Helper signup",
     template_msg="Message ID or Link for the filled template table",
-    destination="The channel where the bot will post the grouped tables",
+    destination="The channel where the bot will post the grouped lists",
 )
 async def parse_roster_cmd(
     interaction: discord.Interaction,
@@ -312,7 +312,6 @@ async def parse_roster_cmd(
     async def get_msg(input_str: str) -> discord.Message | None:
         input_str = input_str.strip()
         try:
-            # If the user pasted a Discord Message Link
             if "discord.com/channels/" in input_str:
                 parts = input_str.split("/")
                 ch_id, m_id = int(parts[-2]), int(parts[-1])
@@ -323,7 +322,6 @@ async def parse_roster_cmd(
                 if isinstance(channel, discord.TextChannel):
                     return await channel.fetch_message(m_id)
                 return None
-            # If the user pasted a plain ID (assumes current channel)
             return await interaction.channel.fetch_message(int(input_str))
         except Exception:
             return None
@@ -408,9 +406,9 @@ async def parse_roster_cmd(
         if current_list is not None:
             match = re.match(r"^\D*?(\d+)[.,:;\s\u00A0]+(.+)$", clean_line)
             if match:
-                slot = match.group(1)
+                # We extract the name and ignore the slot number entirely
                 name = match.group(2).strip()
-                current_list.append((slot, name))
+                current_list.append(name)
 
     if not accepted and not maybe:
         await interaction.followup.send(
@@ -422,33 +420,31 @@ async def parse_roster_cmd(
     acc_groups = defaultdict(list)
     may_groups = defaultdict(list)
 
-    for slot, name in accepted:
+    for name in accepted:
         role = template_roles.get(name.lower(), "Unassigned")
-        acc_groups[role].append((slot, name))
+        acc_groups[role].append(name)
 
-    for slot, name in maybe:
+    for name in maybe:
         role = template_roles.get(name.lower(), "Unassigned")
-        may_groups[role].append((slot, name))
+        may_groups[role].append(name)
 
-    # 4. Build the final grouped Markdown Tables
+    # 4. Build the final grouped Markdown Lists
     response_lines = []
 
     if acc_groups:
         response_lines.append("# ✅ Accepted\n")
         for role in sorted(acc_groups.keys()):
             response_lines.append(f"### {role}")
-            response_lines.extend(["| Slot | Name |", "|---|---|"])
-            for slot, name in acc_groups[role]:
-                response_lines.append(f"| {slot} | {name} |")
+            for name in acc_groups[role]:
+                response_lines.append(f"- {name}")
             response_lines.append("")
 
     if may_groups:
         response_lines.append("# ❔ Maybe\n")
         for role in sorted(may_groups.keys()):
             response_lines.append(f"### {role}")
-            response_lines.extend(["| Slot | Name |", "|---|---|"])
-            for slot, name in may_groups[role]:
-                response_lines.append(f"| {slot} | {name} |")
+            for name in may_groups[role]:
+                response_lines.append(f"- {name}")
             response_lines.append("")
 
     inner_text = "\n".join(response_lines)
@@ -471,6 +467,7 @@ async def parse_roster_cmd(
             ephemeral=True,
         )
         log(f"[ROSTER] Failed: Lacking permissions to write in #{destination.name}")
+
 
 @BOT.tree.command(
     name="list-members",
