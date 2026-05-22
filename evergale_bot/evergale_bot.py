@@ -435,7 +435,7 @@ async def parse_roster_cmd(
 
 @BOT.tree.command(
     name="list-members",
-    description="List server usernames directly in chat (optional: filter by role)",
+    description="List server nicknames directly in chat (optional: filter by role)",
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
@@ -445,13 +445,15 @@ async def list_members_cmd(
     interaction: discord.Interaction,
     role: discord.Role | None = None,
 ) -> None:
-    """Lists server usernames directly in chat, handling Discord's character limit."""
+    """Lists server nicknames directly in chat, handling Discord's character limit."""
     role_log = f" | Filter: @{role.name}" if role else ""
-    log(f"[MEMBERS] Username list requested by @{interaction.user.display_name}{role_log}")
+    log(f"[MEMBERS] Nickname list requested by @{interaction.user.name}{role_log}")
 
-    await interaction.response.defer(ephemeral=True)
+    # Remove ephemeral=True here so the bot prepares a public response
+    await interaction.response.defer()
 
     if not interaction.guild:
+        # Errors stay ephemeral to prevent chat clutter
         await interaction.followup.send(
             "This command must be run in a server.", ephemeral=True,
         )
@@ -460,17 +462,17 @@ async def list_members_cmd(
     # Filter members if a role is provided
     if role:
         members_to_list = [m for m in interaction.guild.members if role in m.roles]
-        header = f"**Usernames with role {role.name} ({len(members_to_list)}):**\n"
+        header = f"**Nicknames with role {role.name} ({len(members_to_list)}):**\n"
     else:
         members_to_list = interaction.guild.members
-        header = f"**All Server Usernames ({len(members_to_list)}):**\n"
+        header = f"**All Server Nicknames ({len(members_to_list)}):**\n"
 
     if not members_to_list:
         msg = f"No members found with the role `{role.name}`." if role else "No members."
         await interaction.followup.send(msg, ephemeral=True)
         return
 
-    # Extract ONLY the raw usernames, sorted alphabetically
+    # Extract display names (nicknames), sorted alphabetically
     sorted_members = sorted(members_to_list, key=lambda m: m.display_name.lower())
 
     message_chunks = []
@@ -490,11 +492,11 @@ async def list_members_cmd(
     if current_chunk:
         message_chunks.append(current_chunk)
 
-    # Send all chunks sequentially
+    # Send all chunks sequentially and PUBLICLY (ephemeral=True removed)
     for chunk in message_chunks:
-        await interaction.followup.send(chunk, ephemeral=True)
+        await interaction.followup.send(chunk)
 
-    log(f"[MEMBERS] Successfully sent {len(message_chunks)} messages with usernames.")
+    log(f"[MEMBERS] Successfully sent {len(message_chunks)} public messages with nicknames.")
 
 
 def main() -> int:
