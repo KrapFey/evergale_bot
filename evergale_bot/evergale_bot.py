@@ -363,7 +363,12 @@ async def generate_report_cmd(
     for line in t_msg.content.split("\n"):
         line = line.strip()
         if line.startswith("|") and line.endswith("|"):
-            parts = [p.strip() for p in line.split("|")[1:-1]]
+            # SMART SPLIT: Split only on pipes NOT preceded by a backslash
+            raw_parts = re.split(r"(?<!\\)\|", line)[1:-1]
+
+            # Clean spaces and unescape the pipe character back to normal
+            parts = [p.strip().replace("\\|", "|") for p in raw_parts]
+
             if len(parts) >= 2:
                 nick, role = parts[0], parts[1]
                 if nick.lower() == "nickname" or set(nick) == {"-"}:
@@ -376,12 +381,6 @@ async def generate_report_cmd(
             "Could not find a valid populated table in the template message.", ephemeral=True,
         )
         return
-
-    # --- NEW: Log the parsed template roles ---
-    log("[ROSTER] --- Parsed Template Roles ---")
-    for nick, role in template_roles.items():
-        log(f"[ROSTER] [Template] {nick} -> {role}")
-    log("[ROSTER] --------------------------------")
 
     # 2. Parse the Raid-Helper Message
     raw_text_blocks = [r_msg.content]
