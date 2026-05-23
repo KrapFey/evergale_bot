@@ -29,7 +29,7 @@ def log(message: str) -> None:
     formatted_msg = f"[{now}] 🤖 {message}"
     print(formatted_msg)
     with Path("app.log").open("a", encoding="utf-8") as f:
-            f.write(formatted_msg + "\n")
+        f.write(formatted_msg + "\n")
 
 
 class Config:
@@ -285,7 +285,7 @@ async def archive_raid_cmd(
 
 @BOT.tree.command(
     name="generate-report",
-    description="Group Raid roster into Discord Embeds with stretched columns and sorted names",
+    description="Group Raid roster into Discord Embeds with stretched columns and colorized groups",
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
@@ -299,7 +299,7 @@ async def generate_report_cmd(
     template_msg: str,
     destination: discord.TextChannel,
 ) -> None:
-    """Parses Raid roster, groups members by role, and sorts names alphabetically in Embeds."""
+    """Parses Raid roster, groups members by role, and adds color emojis to group headers."""
     log(f"[ROSTER] Initiated by @{interaction.user.name} -> To: #{destination.name}")
 
     await interaction.response.defer(ephemeral=True)
@@ -376,6 +376,12 @@ async def generate_report_cmd(
             "Could not find a valid populated table in the template message.", ephemeral=True,
         )
         return
+
+    # --- NEW: Log the parsed template roles ---
+    log("[ROSTER] --- Parsed Template Roles ---")
+    for nick, role in template_roles.items():
+        log(f"[ROSTER] [Template] {nick} -> {role}")
+    log("[ROSTER] --------------------------------")
 
     # 2. Parse the Raid-Helper Message
     raw_text_blocks = [r_msg.content]
@@ -462,9 +468,17 @@ async def generate_report_cmd(
         may_groups[cat].append(display_name)
     log("[ROSTER] --------------------------------------------")
 
-    # 4. Build the final Embeds with Sorted Names and Invisible Spacers
-    embeds = []
+    # Helper function to grab the correct color icon
+    def get_color_icon(category_name: str) -> str:
+        cat_upper = category_name.upper()
+        if cat_upper == "A":
+            return "🔴"
+        if cat_upper == "D":
+            return "🟢"
+        return "🟠"
 
+    # 4. Build the final Embeds with Sorted Names, Invisible Spacers, and Color Icons
+    embeds = []
     COL_PAD = "\u2800" * 12  # noqa: N806
     EMBED_STRETCHER = "\u2800" * 60  # noqa: N806
 
@@ -473,14 +487,14 @@ async def generate_report_cmd(
         em_acc = discord.Embed(title=f"✅ Accepted ({total_acc})", color=discord.Color.green())
 
         for role_cat in sorted(acc_groups.keys()):
-            # Sort the names alphabetically (case-insensitive)
             sorted_members = sorted(acc_groups[role_cat], key=lambda m: m.lower())
 
             val = "\n".join(f"- {m}" for m in sorted_members)
             if len(val) > 1024:
                 val = val[:1020] + "..."
 
-            padded_title = f"**{role_cat} ({len(sorted_members)})** {COL_PAD}"
+            icon = get_color_icon(role_cat)
+            padded_title = f"{icon} **{role_cat} ({len(sorted_members)})** {COL_PAD}"
             em_acc.add_field(name=padded_title, value=val, inline=True)
 
         em_acc.set_footer(text=EMBED_STRETCHER)
@@ -491,14 +505,14 @@ async def generate_report_cmd(
         em_may = discord.Embed(title=f"❔ Maybe ({total_may})", color=discord.Color.gold())
 
         for role_cat in sorted(may_groups.keys()):
-            # Sort the names alphabetically (case-insensitive)
             sorted_members = sorted(may_groups[role_cat], key=lambda m: m.lower())
 
             val = "\n".join(f"- {m}" for m in sorted_members)
             if len(val) > 1024:
                 val = val[:1020] + "..."
 
-            padded_title = f"**{role_cat} ({len(sorted_members)})** {COL_PAD}"
+            icon = get_color_icon(role_cat)
+            padded_title = f"{icon} **{role_cat} ({len(sorted_members)})** {COL_PAD}"
             em_may.add_field(name=padded_title, value=val, inline=True)
 
         em_may.set_footer(text=EMBED_STRETCHER)
