@@ -284,7 +284,7 @@ async def archive_raid_cmd(
 
 
 @BOT.tree.command(
-    name="parse-roster",
+    name="generate-report",
     description="Group Raid roster into Discord Embeds with stretched columns and sorted names",
 )
 @discord.app_commands.default_permissions(administrator=True)
@@ -293,7 +293,7 @@ async def archive_raid_cmd(
     template_msg="Message ID or Link for the filled template table",
     destination="The channel where the bot will post the embeds",
 )
-async def parse_roster_cmd(
+async def generate_report_cmd(
     interaction: discord.Interaction,
     raid_msg: str,
     template_msg: str,
@@ -368,7 +368,8 @@ async def parse_roster_cmd(
                 nick, role = parts[0], parts[1]
                 if nick.lower() == "nickname" or set(nick) == {"-"}:
                     continue
-                template_roles[nick.lower()] = role if role else "Unassigned"
+                # Default to "Without a team" if the column is blank
+                template_roles[nick.lower()] = role if role else "Without a team"
 
     if not template_roles:
         await interaction.followup.send(
@@ -431,8 +432,8 @@ async def parse_roster_cmd(
 
     # 3. Process Roles
     def process_role(name: str, raw_role: str) -> tuple[str, str]:
-        if raw_role == "Unassigned" or not raw_role:
-            return "Unassigned", name
+        if raw_role == "Without a team" or not raw_role:
+            return "Without a team", name
 
         match = re.match(r"^([^\s\(]+)(.*)$", raw_role.strip())
         if match:
@@ -447,15 +448,19 @@ async def parse_roster_cmd(
     acc_groups = defaultdict(list)
     may_groups = defaultdict(list)
 
+    log("[ROSTER] --- Mapping Raid Users to Template Roles ---")
     for name in accepted:
-        raw_role = template_roles.get(name.lower(), "Unassigned")
+        raw_role = template_roles.get(name.lower(), "Without a team")
+        log(f"[ROSTER] [Accepted] {name} -> {raw_role}")
         cat, display_name = process_role(name, raw_role)
         acc_groups[cat].append(display_name)
 
     for name in maybe:
-        raw_role = template_roles.get(name.lower(), "Unassigned")
+        raw_role = template_roles.get(name.lower(), "Without a team")
+        log(f"[ROSTER] [Maybe] {name} -> {raw_role}")
         cat, display_name = process_role(name, raw_role)
         may_groups[cat].append(display_name)
+    log("[ROSTER] --------------------------------------------")
 
     # 4. Build the final Embeds with Sorted Names and Invisible Spacers
     embeds = []
@@ -502,16 +507,18 @@ async def parse_roster_cmd(
     try:
         await destination.send(embeds=embeds)
         await interaction.followup.send(
-            f"Successfully processed roster and sent to {destination.mention}!",
+            f"Successfully generated report and sent to {destination.mention}!",
             ephemeral=True,
         )
-        log(f"[ROSTER] Successfully parsed roster and sent to #{destination.name}")
+        log(f"[ROSTER] Successfully generated report and sent to #{destination.name}")
     except discord.Forbidden:
         await interaction.followup.send(
             f"I lack permissions to send embeds in {destination.mention}.",
             ephemeral=True,
         )
         log(f"[ROSTER] Failed: Lacking permissions to write in #{destination.name}")
+
+
 @BOT.tree.command(
     name="list-members",
     description="List server nicknames in a blank table (optional: filter by role)",
