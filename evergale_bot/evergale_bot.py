@@ -611,6 +611,54 @@ async def list_members_cmd(
 
     log(f"[MEMBERS] Sent {len(message_chunks)} blank table messages to @{interaction.user.name}.")
 
+@BOT.tree.command(
+    name="list-bosses",
+    description="Display an ordered list of bosses from the local database",
+)
+async def list_bosses_cmd(interaction: discord.Interaction) -> None:
+    """Reads bosses.txt and returns an ephemeral ordered list."""
+    log(f"[BOSSES] List requested by @{interaction.user.display_name}")
+
+    # Immediately defer the response as ephemeral (only visible to the caller)
+    await interaction.response.defer(ephemeral=True)
+
+    file_path = Path("bosses.txt")
+
+    if not file_path.exists():
+        await interaction.followup.send("Boss list is not available yet.", ephemeral=True)
+        return
+
+    try:
+        with file_path.open("r", encoding="utf-8") as f:
+            # Read lines, strip formatting/spaces, and drop any empty lines
+            bosses = [line.strip() for line in f if line.strip()]
+    except Exception as e:
+        log(f"[BOSSES] Error reading file: {e}")
+        await interaction.followup.send("An error occurred while reading the Boss list.",
+                                        ephemeral=True)
+        return
+
+    if not bosses:
+        await interaction.followup.send("The Boss list is currently empty.", ephemeral=True)
+        return
+
+    # Build the ordered list
+    response_lines = ["### 🐉 Boss List"]
+    for i, boss in enumerate(bosses, start=1):
+        response_lines.append(f"{i}. {boss}")
+
+    # Safely chunk the message to prevent crashing if the list exceeds 2000 characters
+    chunk = ""
+    for line in response_lines:
+        if len(chunk) + len(line) + 1 > 1900:
+            await interaction.followup.send(chunk, ephemeral=True)
+            chunk = line + "\n"
+        else:
+            chunk += line + "\n"
+
+    if chunk:
+        await interaction.followup.send(chunk, ephemeral=True)
+
 def main() -> int:
     """Load environment and run the bot."""
     token = os.getenv("MAGIC")
