@@ -659,6 +659,44 @@ async def list_bosses_cmd(interaction: discord.Interaction) -> None:
     if chunk:
         await interaction.followup.send(chunk, ephemeral=True)
 
+@BOT.tree.command(
+    name="add-boss",
+    description="Add a new boss to the local database",
+)
+@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.describe(boss_name="The name of the boss to add (can contain spaces)")
+async def add_boss_cmd(
+    interaction: discord.Interaction,
+    boss_name: str,
+) -> None:
+    """Appends a new boss name to bosses.txt, creating the file if needed."""
+    boss_name = boss_name.strip()
+    log(f"[BOSSES] Add requested by @{interaction.user.display_name} -> {boss_name}")
+
+    await interaction.response.defer(ephemeral=True)
+
+    if not boss_name:
+        await interaction.followup.send(
+            "Boss name cannot be empty.",
+            ephemeral=True,
+        )
+        return
+
+    file_path = Path("bosses.txt")
+
+    try:
+        # Opening in "a" (append) mode automatically creates the file if it doesn't exist
+        with file_path.open("a", encoding="utf-8") as f:
+            f.write(f"{boss_name}\n")
+    except Exception as e:
+        log(f"[BOSSES] Error writing to file: {e}")
+        await interaction.followup.send("An error occurred while saving the boss to the file.",
+                                        ephemeral=True)
+        return
+
+    await interaction.followup.send(f"Successfully added **{boss_name}** to the boss list!",
+                                    ephemeral=True)
+
 def main() -> int:
     """Load environment and run the bot."""
     token = os.getenv("MAGIC")
