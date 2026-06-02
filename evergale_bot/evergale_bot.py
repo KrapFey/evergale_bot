@@ -697,6 +697,97 @@ async def add_boss_cmd(
     await interaction.followup.send(f"Successfully added **{boss_name}** to the boss list!",
                                     ephemeral=True)
 
+@BOT.tree.command(
+    name="remove-boss",
+    description="Remove a boss from the local database by name or list number",
+)
+@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.describe(
+    identifier="The exact name or the list number of the boss to remove",
+)
+async def remove_boss_cmd(
+    interaction: discord.Interaction,
+    identifier: str,
+) -> None:
+    """Removes a boss from bosses.txt by exact name (case-insensitive) or index."""
+    identifier = identifier.strip()
+    log(f"[BOSSES] Remove requested by @{interaction.user.display_name} -> {identifier}")
+
+    await interaction.response.defer(ephemeral=True)
+
+    file_path = Path("bosses.txt")
+
+    if not file_path.exists():
+        await interaction.followup.send(
+            "The `bosses.txt` file does not exist yet. Nothing to remove.",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        with file_path.open("r", encoding="utf-8") as f:
+            # Read all lines, dropping any empty ones
+            bosses = [line.strip() for line in f if line.strip()]
+    except Exception as e:
+        log(f"[BOSSES] Error reading file: {e}")
+        await interaction.followup.send(
+            "An error occurred while reading the `bosses.txt` file.",
+            ephemeral=True,
+        )
+        return
+
+    if not bosses:
+        await interaction.followup.send(
+            "The boss list is already empty.",
+            ephemeral=True,
+        )
+        return
+
+    target_index = -1
+    removed_boss_name = ""
+
+    # 1. Check if the user inputted a list number
+    if identifier.isdigit():
+        idx = int(identifier)
+        if 1 <= idx <= len(bosses):
+            target_index = idx - 1  # Convert 1-based list to 0-based index
+    else:
+        # 2. If it's a name, search case-insensitively
+        lower_ident = identifier.lower()
+        for i, boss in enumerate(bosses):
+            if boss.lower() == lower_ident:
+                target_index = i
+                break
+
+    if target_index == -1:
+        await interaction.followup.send(
+            f"Could not find a boss matching **{identifier}**. "
+            "Check the spelling or list number using `/list-bosses`.",
+            ephemeral=True,
+        )
+        return
+
+    # Remove the target boss from the array
+    removed_boss_name = bosses.pop(target_index)
+
+    try:
+        # Open in "w" (write) mode to overwrite the file with the updated list
+        with file_path.open("w", encoding="utf-8") as f:
+            for boss in bosses:
+                f.write(f"{boss}\n")
+    except Exception as e:
+        log(f"[BOSSES] Error writing to file: {e}")
+        await interaction.followup.send(
+            "An error occurred while saving the updated list.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.followup.send(
+        f"Successfully removed **{removed_boss_name}** from the boss list!",
+        ephemeral=True,
+    )
+
 def main() -> int:
     """Load environment and run the bot."""
     token = os.getenv("MAGIC")
