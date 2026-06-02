@@ -3,6 +3,7 @@
 import asyncio
 import datetime
 import os
+import random
 import re
 import sys
 from collections import defaultdict
@@ -787,6 +788,51 @@ async def remove_boss_cmd(
         f"Successfully removed **{removed_boss_name}** from the boss list!",
         ephemeral=True,
     )
+
+@BOT.tree.command(
+    name="random-boss",
+    description="Select a random boss from the local database",
+)
+async def random_boss_cmd(interaction: discord.Interaction) -> None:
+    """Reads bosses.txt and publicly returns a single random boss."""
+    log(f"[BOSSES] Random requested by @{interaction.user.display_name}")
+
+    # We defer publicly here so everyone can see the result
+    await interaction.response.defer()
+
+    file_path = Path("bosses.txt")
+
+    if not file_path.exists():
+        await interaction.followup.send(
+            "The `bosses.txt` file does not exist yet. Add some using `/add-boss`.",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        with file_path.open("r", encoding="utf-8") as f:
+            # Read all lines, dropping any empty ones
+            bosses = [line.strip() for line in f if line.strip()]
+    except Exception as e:
+        log(f"[BOSSES] Error reading file: {e}")
+        await interaction.followup.send(
+            "An error occurred while reading the `bosses.txt` file.",
+            ephemeral=True,
+        )
+        return
+
+    if not bosses:
+        await interaction.followup.send(
+            "The boss list is currently empty.",
+            ephemeral=True,
+        )
+        return
+
+    # Pick a random boss from the cleaned list
+    selected_boss = random.choice(bosses)
+
+    # Send the final result publicly to the channel
+    await interaction.followup.send(f"🎲 The randomly selected boss is: **{selected_boss}**!")
 
 def main() -> int:
     """Load environment and run the bot."""
