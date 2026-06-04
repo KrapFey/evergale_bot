@@ -1,4 +1,4 @@
-"""Evergale BOT — utilities for cleaning channels and archiving Raid-Helper events."""
+"""Evergale BOT — utilities for cleaning channels, archiving, and roster management."""
 
 import asyncio
 import datetime
@@ -25,16 +25,16 @@ BOT = commands.Bot(command_prefix="!", intents=INTENTS)
 
 
 def log(message: str) -> None:
-    """Helper to print nicely formatted and timestamped console logs."""
+    """Log a formatted message with a timestamp to the console and local log file."""
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     formatted_msg = f"[{now}] 🤖 {message}"
     print(formatted_msg)
-    with Path("app.log").open("a", encoding="utf-8") as f:
-        f.write(formatted_msg + "\n")
+    with Path("app.log").open("a", encoding="utf-8") as log_file:
+        log_file.write(formatted_msg + "\n")
 
 
 class Config:
-    """Static configuration values."""
+    """Static configuration values for the bot."""
 
     GUILD_ID: int = int(os.getenv("GUILD_ID", 0))
     MAX_PURGE_SCAN: int = 1000
@@ -42,10 +42,10 @@ class Config:
 
 
 class RosterSelect(discord.ui.Select):
-    """Dropdown menu for selecting roster members."""
+    """Dropdown menu for selecting roster members in the interactive form."""
 
     def __init__(self, options: list[discord.SelectOption], placeholder: str) -> None:
-        """Initialize the multi-select dropdown."""
+        """Initialize the multi-select dropdown with specific options."""
         super().__init__(
             placeholder=placeholder,
             min_values=0,
@@ -107,7 +107,6 @@ class GroupSelectView(discord.ui.View):
         """Process selections, build color-coded embeds, and send the final report."""
         await interaction.response.defer(ephemeral=True)
 
-        # Gather all selected users from ALL dropdowns
         group_a_users = set()
         for select in self.selects:
             group_a_users.update(select.values)
@@ -120,11 +119,10 @@ class GroupSelectView(discord.ui.View):
                 return "🟢"
             return "🟠"
 
-        from collections import defaultdict
         acc_groups = defaultdict(list)
         may_groups = defaultdict(list)
 
-        # Build groups based on manual selections. Unselected default to "D"
+        # Build groups based on manual selections. Unselected default to "D".
         for name in self.accepted:
             cat = "A" if name in group_a_users else "D"
             acc_groups[cat].append(name)
@@ -182,7 +180,7 @@ class GroupSelectView(discord.ui.View):
                 f"{self.destination.mention}!"
             )
             await interaction.followup.send(success_msg, ephemeral=True)
-            log(f"[ROSTER-NEW] Report successfully posted to #{self.destination.name}")
+            log(f"[ROSTER] Report successfully posted to #{self.destination.name}")
         except discord.Forbidden:
             fail_msg = f"I lack permissions to send embeds in {self.destination.mention}."
             await interaction.followup.send(fail_msg, ephemeral=True)
@@ -195,7 +193,7 @@ class GroupSelectView(discord.ui.View):
 
 
 class Cleaner:
-    """Channel cleaning utilities exposed as a slash command."""
+    """Channel cleaning utilities exposed as a slash command namespace."""
 
     @staticmethod
     async def clean_channel(
@@ -204,20 +202,21 @@ class Cleaner:
         limit: int = 100,
         user: discord.Member | None = None,
     ) -> None:
-        """Clean messages in the current channel with filters and limit."""
+        """Clean messages in the current channel with specific filters and scan limits."""
         channel = getattr(interaction, "channel", None)
         channel_name = getattr(channel, "name", "unknown-channel")
 
         log(
             f"[CLEAN] Initiated by @{interaction.user.display_name} in #{channel_name} "
             f"(Filter: {filter_value}, Limit: {limit}, "
-            f"User: {getattr(user, 'name', 'None')})",
+            f"User: {getattr(user, 'display_name', 'None')})",
         )
 
         if not interaction.user.guild_permissions.manage_messages:
-            log(f"[CLEAN] Failed: @{interaction.user.display_name} lacks Manage Messages perm.")
+            log(f"[CLEAN] Failed: @{interaction.user.display_name} lacks Manage Messages.")
             await interaction.response.send_message(
-                "You need Manage Messages permission to use this.", ephemeral=True,
+                "You need Manage Messages permission to use this.",
+                ephemeral=True,
             )
             return
 
@@ -225,14 +224,16 @@ class Cleaner:
         if not bot_member or not bot_member.guild_permissions.manage_messages:
             log("[CLEAN] Failed: Bot lacks Manage Messages permission.")
             await interaction.response.send_message(
-                "I need Manage Messages permission to delete messages.", ephemeral=True,
+                "I need Manage Messages permission to delete messages.",
+                ephemeral=True,
             )
             return
 
         filter_value = filter_value.lower()
         if filter_value not in ("all", "bots", "user"):
             await interaction.response.send_message(
-                "Invalid filter. Use `all`, `bots`, or `user`.", ephemeral=True,
+                "Invalid filter. Use `all`, `bots`, or `user`.",
+                ephemeral=True,
             )
             return
 
@@ -240,6 +241,7 @@ class Cleaner:
         await interaction.response.defer(ephemeral=True)
 
         def check(msg: discord.Message) -> bool:
+            """Determine if a scanned message meets the deletion criteria."""
             if msg.id == interaction.id:
                 return False
             if filter_value == "all":
@@ -280,7 +282,8 @@ class Cleaner:
         except Exception as e:
             log(f"[CLEAN] Failed history scan: {e}")
             await interaction.followup.send(
-                "Failed to scan channel history. Check bot permissions.", ephemeral=True,
+                "Failed to scan channel history. Check bot permissions.",
+                ephemeral=True,
             )
             return
 
@@ -298,11 +301,9 @@ class Cleaner:
         )
 
 
-# Register commands and events
-
 @BOT.event
 async def on_ready() -> None:
-    """Sync commands cleanly to your specific server."""
+    """Sync commands cleanly to the configured server on bot startup."""
     log(f"Logged in as {BOT.user.display_name} (ID: {BOT.user.id})")
 
     guild = discord.Object(id=Config.GUILD_ID)
@@ -322,18 +323,19 @@ async def on_ready() -> None:
 )
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
-    filter="Which messages to remove: all | bots | user",
+    filter_val="Which messages to remove: all | bots | user",
     limit="How many messages to scan (max 1000)",
-    user="When filter=user, target this member",
+    user="When filter_val=user, target this member",
 )
+@discord.app_commands.rename(filter_val="filter")
 async def clean_cmd(
     interaction: discord.Interaction,
-    filter: str = "all",  # noqa: A002
+    filter_val: str = "all",
     limit: int = 100,
     user: discord.Member | None = None,
 ) -> None:
-    """Handles the /clean command."""
-    await Cleaner.clean_channel(interaction, filter_value=filter, limit=limit, user=user)
+    """Handle the /clean slash command."""
+    await Cleaner.clean_channel(interaction, filter_value=filter_val, limit=limit, user=user)
 
 
 @BOT.tree.command(
@@ -356,7 +358,7 @@ async def archive_raid_cmd(
     archive_limit: int = 50,
     scan_limit: int = 200,
 ) -> None:
-    """Finds multiple Raid-Helper messages, forwards them, and deletes the originals."""
+    """Find multiple Raid-Helper messages, forward them, and delete the originals."""
     log(
         f"[ARCHIVE] Initiated by @{interaction.user.display_name} | From: #{source.name} "
         f"-> To: #{destination.name} | Tag: {tag} | Max Archive: {archive_limit} "
@@ -368,7 +370,8 @@ async def archive_raid_cmd(
     if not interaction.user.guild_permissions.manage_messages:
         log(f"[ARCHIVE] Failed: @{interaction.user.display_name} lacks Manage Messages perm.")
         await interaction.followup.send(
-            "You need Manage Messages permission to use this.", ephemeral=True,
+            "You need Manage Messages permission to use this.",
+            ephemeral=True,
         )
         return
 
@@ -439,255 +442,6 @@ async def archive_raid_cmd(
 
 @BOT.tree.command(
     name="generate-report",
-    description="Group Raid roster into Discord Embeds with stretched columns and colorized groups",
-)
-@discord.app_commands.default_permissions(administrator=True)
-@discord.app_commands.describe(
-    raid_msg="Message ID or Link for the Raid-Helper signup",
-    template_msg="Message ID or Link for the filled template table",
-    destination="The channel where the bot will post the embeds",
-)
-async def generate_report_cmd(
-    interaction: discord.Interaction,
-    raid_msg: str,
-    template_msg: str,
-    destination: discord.TextChannel,
-) -> None:
-    """Parses Raid roster, groups members by role, and adds color emojis to group headers."""
-    log(f"[ROSTER] Initiated by @{interaction.user.name} -> To: #{destination.name}")
-
-    await interaction.response.defer(ephemeral=True)
-
-    if not interaction.guild:
-        await interaction.followup.send("Must be run in a server.", ephemeral=True)
-        return
-
-    # Helper function to smartly fetch messages using either a Link or an ID
-    async def get_msg(input_str: str, label: str) -> discord.Message | None:
-        input_str = input_str.strip()
-        try:
-            if "discord.com/channels/" in input_str:
-                parts = input_str.split("/")
-                ch_id, m_id = int(parts[-2]), int(parts[-1])
-
-                channel = interaction.guild.get_channel(ch_id)
-                if not channel:
-                    try:
-                        channel = await interaction.guild.fetch_channel(ch_id)
-                    except discord.NotFound:
-                        log(f"[ROSTER] Error: {label} channel {ch_id} not found.")
-                        return None
-                    except discord.Forbidden:
-                        log(f"[ROSTER] Error: Bot lacks permission to view {label} ch {ch_id}.")
-                        return None
-
-                if hasattr(channel, "fetch_message"):
-                    try:
-                        return await channel.fetch_message(m_id)
-                    except discord.NotFound:
-                        log(f"[ROSTER] Error: {label} message {m_id} not found in channel {ch_id}.")
-                        return None
-                else:
-                    log(f"[ROSTER] Error: {label} channel {ch_id} does not support messages.")
-                    return None
-            else:
-                return await interaction.channel.fetch_message(int(input_str))
-        except Exception as e:
-            log(f"[ROSTER] Exception while fetching {label} message: {e}")
-            return None
-
-    r_msg = await get_msg(raid_msg, "Raid")
-    t_msg = await get_msg(template_msg, "Template")
-
-    if not r_msg or not t_msg:
-        await interaction.followup.send(
-            "Could not find one or both messages. Check your console log for exact errors.",
-            ephemeral=True,
-        )
-        return
-
-    if r_msg.author.id != Config.RAID_HELPER_ID:
-        await interaction.followup.send(
-            "The Raid message was not sent by the Raid-Helper bot.", ephemeral=True,
-        )
-        return
-
-    # 1. Parse the Template Message to map Nicknames -> Roles
-    template_roles = {}
-    for line in t_msg.content.split("\n"):
-        line = line.strip()
-        if line.startswith("|") and line.endswith("|"):
-            # SMART SPLIT: Split only on pipes NOT preceded by a backslash
-            raw_parts = re.split(r"(?<!\\)\|", line)[1:-1]
-
-            # Clean spaces and unescape the pipe character back to normal
-            parts = [p.strip().replace("\\|", "|") for p in raw_parts]
-
-            if len(parts) >= 2:
-                nick, role = parts[0], parts[1]
-                if nick.lower() == "nickname" or set(nick) == {"-"}:
-                    continue
-                # Default to "Without a team" if the column is blank
-                template_roles[nick.lower()] = role if role else "Without a team"
-
-    if not template_roles:
-        await interaction.followup.send(
-            "Could not find a valid populated table in the template message.", ephemeral=True,
-        )
-        return
-
-    # 2. Parse the Raid-Helper Message
-    raw_text_blocks = [r_msg.content]
-    for embed in r_msg.embeds:
-        if embed.title:
-            raw_text_blocks.append(embed.title)
-        if embed.description:
-            raw_text_blocks.append(embed.description)
-        for field in embed.fields:
-            raw_text_blocks.append(field.name)
-            raw_text_blocks.append(field.value)
-
-    raw_text = "\n".join(filter(None, raw_text_blocks))
-
-    text_no_emojis = re.sub(r"<a?:\w+:\d+>", "", raw_text)
-    text_cleaned = re.sub(r"[*_`~]", "", text_no_emojis)
-
-    lines = text_cleaned.split("\n")
-    accepted, maybe = [], []
-    current_list = None
-    strip_pat = r"^[\s\u2000-\u200F\u2800\uFEFF\u00A0]+|[\s\u2000-\u200F\u2800\uFEFF\u00A0]+$"
-
-    for line in lines:
-        clean_line = re.sub(strip_pat, "", line)
-        if not clean_line:
-            continue
-
-        lower_line = clean_line.lower()
-
-        if "accepted" in lower_line and len(lower_line) < 40:
-            current_list = accepted
-            continue
-        if ("maybe" in lower_line or "tentative" in lower_line) and len(lower_line) < 40:
-            current_list = maybe
-            continue
-        if (
-            any(w in lower_line for w in ("declined", "absence", "late"))
-            and len(lower_line) < 40
-        ):
-            current_list = None
-            continue
-
-        if current_list is not None:
-            match = re.match(r"^\D*?(\d+)[.,:;\s\u00A0]+(.+)$", clean_line)
-            if match:
-                name = match.group(2).strip()
-                current_list.append(name)
-
-    if not accepted and not maybe:
-        await interaction.followup.send(
-            "Could not find any users in the Raid message.", ephemeral=True,
-        )
-        return
-
-    # 3. Process Roles
-    def process_role(name: str, raw_role: str) -> tuple[str, str]:
-        if raw_role == "Without a team" or not raw_role:
-            return "Without a team", name
-
-        match = re.match(r"^([^\s\(]+)(.*)$", raw_role.strip())
-        if match:
-            category = match.group(1).strip()
-            remainder = match.group(2).strip(" ()")
-
-            if remainder:
-                return category, f"{name} ({remainder})"
-            return category, name
-        return raw_role, name
-
-    acc_groups = defaultdict(list)
-    may_groups = defaultdict(list)
-
-    log("[ROSTER] --- Mapping Raid Users to Template Roles ---")
-    for name in accepted:
-        raw_role = template_roles.get(name.lower(), "Without a team")
-        log(f"[ROSTER] [Accepted] {name} -> {raw_role}")
-        cat, display_name = process_role(name, raw_role)
-        acc_groups[cat].append(display_name)
-
-    for name in maybe:
-        raw_role = template_roles.get(name.lower(), "Without a team")
-        log(f"[ROSTER] [Maybe] {name} -> {raw_role}")
-        cat, display_name = process_role(name, raw_role)
-        may_groups[cat].append(display_name)
-    log("[ROSTER] --------------------------------------------")
-
-    # Helper function to grab the correct color icon
-    def get_color_icon(category_name: str) -> str:
-        cat_upper = category_name.upper()
-        if cat_upper == "A":
-            return "🔴"
-        if cat_upper == "D":
-            return "🟢"
-        return "🟠"
-
-    # 4. Build the final Embeds with Sorted Names, Invisible Spacers, and Color Icons
-    embeds = []
-    COL_PAD = "\u2800" * 12  # noqa: N806
-    EMBED_STRETCHER = "\u2800" * 60  # noqa: N806
-
-    if acc_groups:
-        total_acc = sum(len(m) for m in acc_groups.values())
-        em_acc = discord.Embed(title=f"✅ Accepted ({total_acc})", color=discord.Color.green())
-
-        for role_cat in sorted(acc_groups.keys()):
-            sorted_members = sorted(acc_groups[role_cat], key=lambda m: m.lower())
-
-            val = "\n".join(f"- {m}" for m in sorted_members)
-            if len(val) > 1024:
-                val = val[:1020] + "..."
-
-            icon = get_color_icon(role_cat)
-            padded_title = f"{icon} **{role_cat} ({len(sorted_members)})** {COL_PAD}"
-            em_acc.add_field(name=padded_title, value=val, inline=True)
-
-        em_acc.set_footer(text=EMBED_STRETCHER)
-        embeds.append(em_acc)
-
-    if may_groups:
-        total_may = sum(len(m) for m in may_groups.values())
-        em_may = discord.Embed(title=f"❔ Maybe ({total_may})", color=discord.Color.gold())
-
-        for role_cat in sorted(may_groups.keys()):
-            sorted_members = sorted(may_groups[role_cat], key=lambda m: m.lower())
-
-            val = "\n".join(f"- {m}" for m in sorted_members)
-            if len(val) > 1024:
-                val = val[:1020] + "..."
-
-            icon = get_color_icon(role_cat)
-            padded_title = f"{icon} **{role_cat} ({len(sorted_members)})** {COL_PAD}"
-            em_may.add_field(name=padded_title, value=val, inline=True)
-
-        em_may.set_footer(text=EMBED_STRETCHER)
-        embeds.append(em_may)
-
-    try:
-        await destination.send(embeds=embeds)
-        await interaction.followup.send(
-            f"Successfully generated report and sent to {destination.mention}!",
-            ephemeral=True,
-        )
-        log(f"[ROSTER] Successfully generated report and sent to #{destination.name}")
-    except discord.Forbidden:
-        await interaction.followup.send(
-            f"I lack permissions to send embeds in {destination.mention}.",
-            ephemeral=True,
-        )
-        log(f"[ROSTER] Failed: Lacking permissions to write in #{destination.name}")
-
-
-@BOT.tree.command(
-    name="generate-report-new",
     description="Parse roster and use an interactive menu to assign Group A",
 )
 @discord.app_commands.default_permissions(administrator=True)
@@ -695,13 +449,13 @@ async def generate_report_cmd(
     raid_msg="Message ID or Link for the Raid-Helper signup",
     destination="The channel where the bot will post the embeds",
 )
-async def generate_report_new_cmd(
+async def generate_report_cmd(
     interaction: discord.Interaction,
     raid_msg: str,
     destination: discord.TextChannel,
 ) -> None:
-    """Parses Raid roster and sends an interactive multi-select form before generating."""
-    log(f"[ROSTER-NEW] Initiated by @{interaction.user.name} -> To: #{destination.name}")
+    """Parse the Raid roster and send an interactive multi-select form before generating."""
+    log(f"[ROSTER] Initiated by @{interaction.user.display_name} -> To: #{destination.name}")
 
     await interaction.response.defer(ephemeral=True)
 
@@ -723,10 +477,9 @@ async def generate_report_new_cmd(
 
                 return await channel.fetch_message(m_id)
 
-            # If not a link, assume it's just the message ID
             return await interaction.channel.fetch_message(int(input_str))
         except Exception as e:
-            log(f"[ROSTER-NEW] Error fetching message: {e}")
+            log(f"[ROSTER] Error fetching message: {e}")
             return None
 
     r_msg = await get_msg(raid_msg)
@@ -741,7 +494,6 @@ async def generate_report_new_cmd(
         await interaction.followup.send(fail_msg, ephemeral=True)
         return
 
-    # Parse the Raid-Helper Message
     raw_text_blocks = [r_msg.content]
     for embed in r_msg.embeds:
         if embed.title:
@@ -786,14 +538,15 @@ async def generate_report_new_cmd(
                 current_list.append(name)
 
     if not accepted and not maybe:
-        await interaction.followup.send("Could not find any users in the message.", ephemeral=True)
+        await interaction.followup.send(
+            "Could not find any users in the message.",
+            ephemeral=True,
+        )
         return
 
-    # Sort alphabetically so the dropdown menu is easy to read
     accepted.sort(key=lambda m: m.lower())
     maybe.sort(key=lambda m: m.lower())
 
-    # Create and send the interactive view (passing the separated lists)
     view = GroupSelectView(accepted, maybe, destination)
 
     prompt = (
@@ -801,6 +554,7 @@ async def generate_report_new_cmd(
         "*(Everyone else will automatically be placed in **Group D** when you click Confirm)*."
     )
     await interaction.followup.send(prompt, view=view, ephemeral=True)
+
 
 @BOT.tree.command(
     name="list-members",
@@ -814,19 +568,19 @@ async def list_members_cmd(
     interaction: discord.Interaction,
     role: discord.Role | None = None,
 ) -> None:
-    """Lists server nicknames in an ephemeral markdown table with a blank Role column."""
+    """List server nicknames in an ephemeral markdown table with a blank Role column."""
     role_log = f" | Filter: @{role.name}" if role else ""
-    log(f"[MEMBERS] Blank table requested by @{interaction.user.name}{role_log}")
+    log(f"[MEMBERS] Blank table requested by @{interaction.user.display_name}{role_log}")
 
     await interaction.response.defer(ephemeral=True)
 
     if not interaction.guild:
         await interaction.followup.send(
-            "This command must be run in a server.", ephemeral=True,
+            "This command must be run in a server.",
+            ephemeral=True,
         )
         return
 
-    # Filter members if a role is provided
     if role:
         members = [m for m in interaction.guild.members if role in m.roles]
         header = f"### Nicknames with role {role.name} ({len(members)})"
@@ -839,20 +593,17 @@ async def list_members_cmd(
         await interaction.followup.send(msg, ephemeral=True)
         return
 
-    # Sort alphabetically by display name
     sorted_members = sorted(members, key=lambda m: m.display_name.lower())
 
-    # Step 1: Pre-process data and find the maximum column width for nicknames
     parsed_names = []
     max_nick_len = len("Nickname")
-    role_col_width = len("Role")  # Matches exactly to the word "Role"
+    role_col_width = len("Role")
 
     for member in sorted_members:
         clean_name = member.display_name.replace("|", "\\|")
         max_nick_len = max(max_nick_len, len(clean_name))
         parsed_names.append(clean_name)
 
-    # Step 2: Build dynamic headers using the calculated widths
     table_header = f"| {'Nickname'.ljust(max_nick_len)} | {'Role'.ljust(role_col_width)} |\n"
     table_divider = f"|{'-' * (max_nick_len + 2)}|{'-' * (role_col_width + 2)}|\n"
 
@@ -860,26 +611,22 @@ async def list_members_cmd(
     message_chunks = []
     current_inner = base_table
 
-    # Step 3: Build the rows using precise spacing padding and an empty role column
     for name in parsed_names:
         addition = f"| {name.ljust(max_nick_len)} | {' ' * role_col_width} |\n"
 
-        # Discord limit is 2000. 1900 gives a safe buffer.
         if len(current_inner) + len(addition) > 1900:
             message_chunks.append(f"{header}\n```markdown\n{current_inner}```")
             current_inner = base_table + addition
         else:
             current_inner += addition
 
-    # Append the final leftover chunk
     if current_inner != base_table:
         message_chunks.append(f"{header}\n```markdown\n{current_inner}```")
 
-    # Send all chunks sequentially
     for chunk in message_chunks:
         await interaction.followup.send(chunk, ephemeral=True)
 
-    log(f"[MEMBERS] Sent {len(message_chunks)} blank table messages to @{interaction.user.name}.")
+    log(f"[MEMBERS] Sent {len(message_chunks)} table chunks to @{interaction.user.display_name}.")
 
 
 @BOT.tree.command(
@@ -887,10 +634,9 @@ async def list_members_cmd(
     description="Display an ordered list of bosses from the local database",
 )
 async def list_bosses_cmd(interaction: discord.Interaction) -> None:
-    """Reads bosses.txt and returns an ephemeral ordered list."""
+    """Read bosses.txt and return an ephemeral ordered list."""
     log(f"[BOSSES] List requested by @{interaction.user.display_name}")
 
-    # Immediately defer the response as ephemeral (only visible to the caller)
     await interaction.response.defer(ephemeral=True)
 
     file_path = Path("bosses.txt")
@@ -901,24 +647,23 @@ async def list_bosses_cmd(interaction: discord.Interaction) -> None:
 
     try:
         with file_path.open("r", encoding="utf-8") as f:
-            # Read lines, strip formatting/spaces, and drop any empty lines
             bosses = [line.strip() for line in f if line.strip()]
     except Exception as e:
         log(f"[BOSSES] Error reading file: {e}")
-        await interaction.followup.send("An error occurred while reading the Boss list.",
-                                        ephemeral=True)
+        await interaction.followup.send(
+            "An error occurred while reading the Boss list.",
+            ephemeral=True,
+        )
         return
 
     if not bosses:
         await interaction.followup.send("The Boss list is currently empty.", ephemeral=True)
         return
 
-    # Build the ordered list
     response_lines = ["### 🐉 Boss List"]
     for i, boss in enumerate(bosses, start=1):
         response_lines.append(f"{i}. {boss}")
 
-    # Safely chunk the message to prevent crashing if the list exceeds 2000 characters
     chunk = ""
     for line in response_lines:
         if len(chunk) + len(line) + 1 > 1900:
@@ -930,17 +675,20 @@ async def list_bosses_cmd(interaction: discord.Interaction) -> None:
     if chunk:
         await interaction.followup.send(chunk, ephemeral=True)
 
+
 @BOT.tree.command(
     name="add-boss",
     description="Add a new boss to the local database",
 )
 @discord.app_commands.default_permissions(administrator=True)
-@discord.app_commands.describe(boss_name="The name of the boss to add (can contain spaces)")
+@discord.app_commands.describe(
+    boss_name="The name of the boss to add (can contain spaces)",
+)
 async def add_boss_cmd(
     interaction: discord.Interaction,
     boss_name: str,
 ) -> None:
-    """Appends a new boss name to bosses.txt, creating the file if needed."""
+    """Append a new boss name to bosses.txt, creating the file if needed."""
     boss_name = boss_name.strip()
     log(f"[BOSSES] Add requested by @{interaction.user.display_name} -> {boss_name}")
 
@@ -956,17 +704,21 @@ async def add_boss_cmd(
     file_path = Path("bosses.txt")
 
     try:
-        # Opening in "a" (append) mode automatically creates the file if it doesn't exist
         with file_path.open("a", encoding="utf-8") as f:
             f.write(f"{boss_name}\n")
     except Exception as e:
         log(f"[BOSSES] Error writing to file: {e}")
-        await interaction.followup.send("An error occurred while saving the boss to the file.",
-                                        ephemeral=True)
+        await interaction.followup.send(
+            "An error occurred while saving the boss to the file.",
+            ephemeral=True,
+        )
         return
 
-    await interaction.followup.send(f"Successfully added **{boss_name}** to the boss list!",
-                                    ephemeral=True)
+    await interaction.followup.send(
+        f"Successfully added **{boss_name}** to the boss list!",
+        ephemeral=True,
+    )
+
 
 @BOT.tree.command(
     name="remove-boss",
@@ -980,7 +732,7 @@ async def remove_boss_cmd(
     interaction: discord.Interaction,
     identifier: str,
 ) -> None:
-    """Removes a boss from bosses.txt by exact name (case-insensitive) or index."""
+    """Remove a boss from bosses.txt by exact name (case-insensitive) or index."""
     identifier = identifier.strip()
     log(f"[BOSSES] Remove requested by @{interaction.user.display_name} -> {identifier}")
 
@@ -997,7 +749,6 @@ async def remove_boss_cmd(
 
     try:
         with file_path.open("r", encoding="utf-8") as f:
-            # Read all lines, dropping any empty ones
             bosses = [line.strip() for line in f if line.strip()]
     except Exception as e:
         log(f"[BOSSES] Error reading file: {e}")
@@ -1017,13 +768,11 @@ async def remove_boss_cmd(
     target_index = -1
     removed_boss_name = ""
 
-    # 1. Check if the user inputted a list number
     if identifier.isdigit():
         idx = int(identifier)
         if 1 <= idx <= len(bosses):
-            target_index = idx - 1  # Convert 1-based list to 0-based index
+            target_index = idx - 1
     else:
-        # 2. If it's a name, search case-insensitively
         lower_ident = identifier.lower()
         for i, boss in enumerate(bosses):
             if boss.lower() == lower_ident:
@@ -1038,11 +787,9 @@ async def remove_boss_cmd(
         )
         return
 
-    # Remove the target boss from the array
     removed_boss_name = bosses.pop(target_index)
 
     try:
-        # Open in "w" (write) mode to overwrite the file with the updated list
         with file_path.open("w", encoding="utf-8") as f:
             for boss in bosses:
                 f.write(f"{boss}\n")
@@ -1059,15 +806,15 @@ async def remove_boss_cmd(
         ephemeral=True,
     )
 
+
 @BOT.tree.command(
     name="random-boss",
     description="Select a random boss from the local database",
 )
 async def random_boss_cmd(interaction: discord.Interaction) -> None:
-    """Reads bosses.txt and publicly returns a single random boss."""
+    """Read bosses.txt and publicly return a single random boss."""
     log(f"[BOSSES] Random requested by @{interaction.user.display_name}")
 
-    # We defer publicly here so everyone can see the result
     await interaction.response.defer()
 
     file_path = Path("bosses.txt")
@@ -1081,7 +828,6 @@ async def random_boss_cmd(interaction: discord.Interaction) -> None:
 
     try:
         with file_path.open("r", encoding="utf-8") as f:
-            # Read all lines, dropping any empty ones
             bosses = [line.strip() for line in f if line.strip()]
     except Exception as e:
         log(f"[BOSSES] Error reading file: {e}")
@@ -1098,14 +844,12 @@ async def random_boss_cmd(interaction: discord.Interaction) -> None:
         )
         return
 
-    # Pick a random boss from the cleaned list
     selected_boss = random.choice(bosses)
-
-    # Send the final result publicly to the channel
     await interaction.followup.send(f"🎲 The randomly selected boss is: **{selected_boss}**!")
 
+
 def main() -> int:
-    """Load environment and run the bot."""
+    """Load environment variables and start the Discord bot loop."""
     token = os.getenv("MAGIC")
     if not token:
         print("Missing MAGIC token in environment variables.")
