@@ -44,7 +44,7 @@ class Config:
 class RosterSelect(discord.ui.Select):
     """Dropdown menu for selecting roster members."""
 
-    def __init__(self, options: list[discord.SelectOption], placeholder: str):
+    def __init__(self, options: list[discord.SelectOption], placeholder: str) -> None:
         """Initialize the multi-select dropdown."""
         super().__init__(
             placeholder=placeholder,
@@ -59,35 +59,55 @@ class RosterSelect(discord.ui.Select):
 
 
 class GroupSelectView(discord.ui.View):
-    """Interactive view containing dropdowns and a confirmation button."""
+    """Interactive view containing separated dropdowns and a confirmation button."""
 
-    def __init__(self, all_users: list[str], accepted: list[str], maybe: list[str],
-                       destination: discord.TextChannel):
-        """Initialize the view, chunking users into multiple dropdowns to respect limits."""
-        super().__init__(timeout=600) # Form stays active for 10 minutes
-        self.all_users = all_users
+    def __init__(
+        self,
+        accepted: list[str],
+        maybe: list[str],
+        destination: discord.TextChannel,
+    ) -> None:
+        """Initialize view, chunking Accepted and Maybe lists into separate dropdowns."""
+        super().__init__(timeout=600)  # Form stays active for 10 minutes
         self.accepted = accepted
         self.maybe = maybe
         self.destination = destination
         self.selects = []
 
-        # Discord limits Select Menus to 25 items each.
-        # We chunk the user list and generate as many menus as needed.
-        chunks = [all_users[i:i + 25] for i in range(0, len(all_users), 25)]
+        # 1. Chunk and build dropdowns for ACCEPTED users
+        if accepted:
+            acc_chunks = [accepted[i : i + 25] for i in range(0, len(accepted), 25)]
+            for i, chunk in enumerate(acc_chunks):
+                options = [discord.SelectOption(label=name) for name in chunk]
+                placeholder = f"✅ Select Group A (Accepted - Part {i+1})..."
+                select = RosterSelect(options, placeholder=placeholder)
+                self.selects.append(select)
+                self.add_item(select)
 
-        for i, chunk in enumerate(chunks):
-            options = [discord.SelectOption(label=name) for name in chunk]
-            select = RosterSelect(options, placeholder=f"Select Group A members (Part {i+1})...")
-            self.selects.append(select)
-            self.add_item(select)
+        # 2. Chunk and build dropdowns for MAYBE users
+        if maybe:
+            may_chunks = [maybe[i : i + 25] for i in range(0, len(maybe), 25)]
+            for i, chunk in enumerate(may_chunks):
+                options = [discord.SelectOption(label=name) for name in chunk]
+                placeholder = f"❔ Select Group A (Maybe - Part {i+1})..."
+                select = RosterSelect(options, placeholder=placeholder)
+                self.selects.append(select)
+                self.add_item(select)
 
-    @discord.ui.button(label="Confirm & Generate Report", style=discord.ButtonStyle.green, row=4)
-    async def confirm_btn(self, interaction: discord.Interaction,
-                                _button: discord.ui.Button) -> None:
+    @discord.ui.button(
+        label="Confirm & Generate Report",
+        style=discord.ButtonStyle.green,
+        row=4,
+    )
+    async def confirm_btn(
+        self,
+        interaction: discord.Interaction,
+        _button: discord.ui.Button,
+    ) -> None:
         """Process selections, build color-coded embeds, and send the final report."""
         await interaction.response.defer(ephemeral=True)
 
-        # Gather all selected users from all dropdowns
+        # Gather all selected users from ALL dropdowns
         group_a_users = set()
         for select in self.selects:
             group_a_users.update(select.values)
@@ -96,19 +116,21 @@ class GroupSelectView(discord.ui.View):
             """Return the corresponding emoji for a given category."""
             if category_name == "A":
                 return "🔴"
+            if category_name == "D":
+                return "🟢"
             return "🟠"
 
         from collections import defaultdict
         acc_groups = defaultdict(list)
         may_groups = defaultdict(list)
 
-        # Build groups based on manual selections
+        # Build groups based on manual selections. Unselected default to "D"
         for name in self.accepted:
-            cat = "A" if name in group_a_users else "Without a team"
+            cat = "A" if name in group_a_users else "D"
             acc_groups[cat].append(name)
 
         for name in self.maybe:
-            cat = "A" if name in group_a_users else "Without a team"
+            cat = "A" if name in group_a_users else "D"
             may_groups[cat].append(name)
 
         # Build Final Embeds
@@ -118,7 +140,8 @@ class GroupSelectView(discord.ui.View):
 
         if acc_groups:
             total_acc = sum(len(m) for m in acc_groups.values())
-            em_acc = discord.Embed(title=f"✅ Accepted ({total_acc})", color=discord.Color.green())
+            title_acc = f"✅ Accepted ({total_acc})"
+            em_acc = discord.Embed(title=title_acc, color=discord.Color.green())
 
             for role_cat in sorted(acc_groups.keys()):
                 sorted_members = sorted(acc_groups[role_cat], key=lambda m: m.lower())
@@ -135,7 +158,8 @@ class GroupSelectView(discord.ui.View):
 
         if may_groups:
             total_may = sum(len(m) for m in may_groups.values())
-            em_may = discord.Embed(title=f"❔ Maybe ({total_may})", color=discord.Color.gold())
+            title_may = f"❔ Maybe ({total_may})"
+            em_may = discord.Embed(title=title_may, color=discord.Color.gold())
 
             for role_cat in sorted(may_groups.keys()):
                 sorted_members = sorted(may_groups[role_cat], key=lambda m: m.lower())
@@ -153,16 +177,15 @@ class GroupSelectView(discord.ui.View):
         # Send the final embeds
         try:
             await self.destination.send(embeds=embeds)
-            await interaction.followup.send(
-               f"Successfully generated interactive report and sent to {self.destination.mention}!",
-                ephemeral=True,
+            success_msg = (
+                f"Successfully generated interactive report and sent to "
+                f"{self.destination.mention}!"
             )
+            await interaction.followup.send(success_msg, ephemeral=True)
             log(f"[ROSTER-NEW] Report successfully posted to #{self.destination.name}")
         except discord.Forbidden:
-            await interaction.followup.send(
-                f"I lack permissions to send embeds in {self.destination.mention}.",
-                ephemeral=True,
-            )
+            fail_msg = f"I lack permissions to send embeds in {self.destination.mention}."
+            await interaction.followup.send(fail_msg, ephemeral=True)
 
         # Lock the form UI so it can't be clicked again
         for item in self.children:
@@ -687,7 +710,7 @@ async def generate_report_new_cmd(
         return
 
     async def get_msg(input_str: str) -> discord.Message | None:
-        """Helper function to fetch messages using either a Link or an ID."""
+        """Fetch a message dynamically using either a URL or an ID string."""
         input_str = input_str.strip()
         try:
             if "discord.com/channels/" in input_str:
@@ -699,6 +722,8 @@ async def generate_report_new_cmd(
                     channel = await interaction.guild.fetch_channel(ch_id)
 
                 return await channel.fetch_message(m_id)
+
+            # If not a link, assume it's just the message ID
             return await interaction.channel.fetch_message(int(input_str))
         except Exception as e:
             log(f"[ROSTER-NEW] Error fetching message: {e}")
@@ -707,17 +732,13 @@ async def generate_report_new_cmd(
     r_msg = await get_msg(raid_msg)
 
     if not r_msg:
-        await interaction.followup.send(
-            "Could not find the Raid message. Make sure the link or ID is correct.",
-            ephemeral=True,
-        )
+        fail_msg = "Could not find the Raid message. Make sure the link or ID is correct."
+        await interaction.followup.send(fail_msg, ephemeral=True)
         return
 
     if r_msg.author.id != Config.RAID_HELPER_ID:
-        await interaction.followup.send(
-            "The message provided was not sent by the Raid-Helper bot.",
-            ephemeral=True,
-        )
+        fail_msg = "The message provided was not sent by the Raid-Helper bot."
+        await interaction.followup.send(fail_msg, ephemeral=True)
         return
 
     # Parse the Raid-Helper Message
@@ -764,28 +785,22 @@ async def generate_report_new_cmd(
                 name = match.group(2).strip()
                 current_list.append(name)
 
-    all_parsed_users = accepted + maybe
-
-    if not all_parsed_users:
-        await interaction.followup.send(
-            "Could not find any users in the Raid message.",
-            ephemeral=True,
-        )
+    if not accepted and not maybe:
+        await interaction.followup.send("Could not find any users in the message.", ephemeral=True)
         return
 
     # Sort alphabetically so the dropdown menu is easy to read
-    all_parsed_users.sort(key=lambda m: m.lower())
+    accepted.sort(key=lambda m: m.lower())
+    maybe.sort(key=lambda m: m.lower())
 
-    # Create and send the interactive view
-    view = GroupSelectView(all_parsed_users, accepted, maybe, destination)
+    # Create and send the interactive view (passing the separated lists)
+    view = GroupSelectView(accepted, maybe, destination)
 
-    await interaction.followup.send(
+    prompt = (
         "**Roster Setup:** Please select the players below who belong in **Group A**.\n"
-       "*(Everyone else will automatically be placed in 'Without a team' when you click Confirm)*.",
-        view=view,
-        ephemeral=True,
+        "*(Everyone else will automatically be placed in **Group D** when you click Confirm)*."
     )
-
+    await interaction.followup.send(prompt, view=view, ephemeral=True)
 
 @BOT.tree.command(
     name="list-members",
