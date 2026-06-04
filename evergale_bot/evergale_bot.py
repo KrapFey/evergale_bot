@@ -41,6 +41,136 @@ class Config:
     RAID_HELPER_ID: int = 579155972115660803
 
 
+class RosterSelect(discord.ui.Select):
+    """Dropdown menu for selecting roster members."""
+
+    def __init__(self, options: list[discord.SelectOption], placeholder: str):
+        """Initialize the multi-select dropdown."""
+        super().__init__(
+            placeholder=placeholder,
+            min_values=0,
+            max_values=len(options),
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        """Handle the user's selection silently without dismissing the form."""
+        await interaction.response.defer()
+
+
+class GroupSelectView(discord.ui.View):
+    """Interactive view containing dropdowns and a confirmation button."""
+
+    def __init__(self, all_users: list[str], accepted: list[str], maybe: list[str],
+                       destination: discord.TextChannel):
+        """Initialize the view, chunking users into multiple dropdowns to respect limits."""
+        super().__init__(timeout=600) # Form stays active for 10 minutes
+        self.all_users = all_users
+        self.accepted = accepted
+        self.maybe = maybe
+        self.destination = destination
+        self.selects = []
+
+        # Discord limits Select Menus to 25 items each.
+        # We chunk the user list and generate as many menus as needed.
+        chunks = [all_users[i:i + 25] for i in range(0, len(all_users), 25)]
+
+        for i, chunk in enumerate(chunks):
+            options = [discord.SelectOption(label=name) for name in chunk]
+            select = RosterSelect(options, placeholder=f"Select Group A members (Part {i+1})...")
+            self.selects.append(select)
+            self.add_item(select)
+
+    @discord.ui.button(label="Confirm & Generate Report", style=discord.ButtonStyle.green, row=4)
+    async def confirm_btn(self, interaction: discord.Interaction,
+                                _button: discord.ui.Button) -> None:
+        """Process selections, build color-coded embeds, and send the final report."""
+        await interaction.response.defer(ephemeral=True)
+
+        # Gather all selected users from all dropdowns
+        group_a_users = set()
+        for select in self.selects:
+            group_a_users.update(select.values)
+
+        def get_color_icon(category_name: str) -> str:
+            """Return the corresponding emoji for a given category."""
+            if category_name == "A":
+                return "🔴"
+            return "🟠"
+
+        from collections import defaultdict
+        acc_groups = defaultdict(list)
+        may_groups = defaultdict(list)
+
+        # Build groups based on manual selections
+        for name in self.accepted:
+            cat = "A" if name in group_a_users else "Without a team"
+            acc_groups[cat].append(name)
+
+        for name in self.maybe:
+            cat = "A" if name in group_a_users else "Without a team"
+            may_groups[cat].append(name)
+
+        # Build Final Embeds
+        embeds = []
+        col_pad = "\u2800" * 12
+        embed_stretcher = "\u2800" * 60
+
+        if acc_groups:
+            total_acc = sum(len(m) for m in acc_groups.values())
+            em_acc = discord.Embed(title=f"✅ Accepted ({total_acc})", color=discord.Color.green())
+
+            for role_cat in sorted(acc_groups.keys()):
+                sorted_members = sorted(acc_groups[role_cat], key=lambda m: m.lower())
+                val = "\n".join(f"- {m}" for m in sorted_members)
+                if len(val) > 1024:
+                    val = val[:1020] + "..."
+
+                icon = get_color_icon(role_cat)
+                padded_title = f"{icon} **{role_cat} ({len(sorted_members)})** {col_pad}"
+                em_acc.add_field(name=padded_title, value=val, inline=True)
+
+            em_acc.set_footer(text=embed_stretcher)
+            embeds.append(em_acc)
+
+        if may_groups:
+            total_may = sum(len(m) for m in may_groups.values())
+            em_may = discord.Embed(title=f"❔ Maybe ({total_may})", color=discord.Color.gold())
+
+            for role_cat in sorted(may_groups.keys()):
+                sorted_members = sorted(may_groups[role_cat], key=lambda m: m.lower())
+                val = "\n".join(f"- {m}" for m in sorted_members)
+                if len(val) > 1024:
+                    val = val[:1020] + "..."
+
+                icon = get_color_icon(role_cat)
+                padded_title = f"{icon} **{role_cat} ({len(sorted_members)})** {col_pad}"
+                em_may.add_field(name=padded_title, value=val, inline=True)
+
+            em_may.set_footer(text=embed_stretcher)
+            embeds.append(em_may)
+
+        # Send the final embeds
+        try:
+            await self.destination.send(embeds=embeds)
+            await interaction.followup.send(
+               f"Successfully generated interactive report and sent to {self.destination.mention}!",
+                ephemeral=True,
+            )
+            log(f"[ROSTER-NEW] Report successfully posted to #{self.destination.name}")
+        except discord.Forbidden:
+            await interaction.followup.send(
+                f"I lack permissions to send embeds in {self.destination.mention}.",
+                ephemeral=True,
+            )
+
+        # Lock the form UI so it can't be clicked again
+        for item in self.children:
+            item.disabled = True
+        await interaction.message.edit(view=self)
+        self.stop()
+
+
 class Cleaner:
     """Channel cleaning utilities exposed as a slash command."""
 
@@ -534,6 +664,130 @@ async def generate_report_cmd(
 
 
 @BOT.tree.command(
+    name="generate-report-new",
+    description="Parse roster and use an interactive menu to assign Group A",
+)
+@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.describe(
+    raid_msg="Message ID or Link for the Raid-Helper signup",
+    destination="The channel where the bot will post the embeds",
+)
+async def generate_report_new_cmd(
+    interaction: discord.Interaction,
+    raid_msg: str,
+    destination: discord.TextChannel,
+) -> None:
+    """Parses Raid roster and sends an interactive multi-select form before generating."""
+    log(f"[ROSTER-NEW] Initiated by @{interaction.user.name} -> To: #{destination.name}")
+
+    await interaction.response.defer(ephemeral=True)
+
+    if not interaction.guild:
+        await interaction.followup.send("Must be run in a server.", ephemeral=True)
+        return
+
+    async def get_msg(input_str: str) -> discord.Message | None:
+        """Helper function to fetch messages using either a Link or an ID."""
+        input_str = input_str.strip()
+        try:
+            if "discord.com/channels/" in input_str:
+                parts = input_str.split("/")
+                ch_id, m_id = int(parts[-2]), int(parts[-1])
+
+                channel = interaction.guild.get_channel(ch_id)
+                if not channel:
+                    channel = await interaction.guild.fetch_channel(ch_id)
+
+                return await channel.fetch_message(m_id)
+            return await interaction.channel.fetch_message(int(input_str))
+        except Exception as e:
+            log(f"[ROSTER-NEW] Error fetching message: {e}")
+            return None
+
+    r_msg = await get_msg(raid_msg)
+
+    if not r_msg:
+        await interaction.followup.send(
+            "Could not find the Raid message. Make sure the link or ID is correct.",
+            ephemeral=True,
+        )
+        return
+
+    if r_msg.author.id != Config.RAID_HELPER_ID:
+        await interaction.followup.send(
+            "The message provided was not sent by the Raid-Helper bot.",
+            ephemeral=True,
+        )
+        return
+
+    # Parse the Raid-Helper Message
+    raw_text_blocks = [r_msg.content]
+    for embed in r_msg.embeds:
+        if embed.title:
+            raw_text_blocks.append(embed.title)
+        if embed.description:
+            raw_text_blocks.append(embed.description)
+        for field in embed.fields:
+            raw_text_blocks.append(field.name)
+            raw_text_blocks.append(field.value)
+
+    raw_text = "\n".join(filter(None, raw_text_blocks))
+
+    text_no_emojis = re.sub(r"<a?:\w+:\d+>", "", raw_text)
+    text_cleaned = re.sub(r"[*_`~]", "", text_no_emojis)
+
+    lines = text_cleaned.split("\n")
+    accepted, maybe = [], []
+    current_list = None
+    strip_pat = r"^[\s\u2000-\u200F\u2800\uFEFF\u00A0]+|[\s\u2000-\u200F\u2800\uFEFF\u00A0]+$"
+
+    for line in lines:
+        clean_line = re.sub(strip_pat, "", line)
+        if not clean_line:
+            continue
+
+        lower_line = clean_line.lower()
+
+        if "accepted" in lower_line and len(lower_line) < 40:
+            current_list = accepted
+            continue
+        if ("maybe" in lower_line or "tentative" in lower_line) and len(lower_line) < 40:
+            current_list = maybe
+            continue
+        if any(w in lower_line for w in ("declined", "absence", "late")) and len(lower_line) < 40:
+            current_list = None
+            continue
+
+        if current_list is not None:
+            match = re.match(r"^\D*?(\d+)[.,:;\s\u00A0]+(.+)$", clean_line)
+            if match:
+                name = match.group(2).strip()
+                current_list.append(name)
+
+    all_parsed_users = accepted + maybe
+
+    if not all_parsed_users:
+        await interaction.followup.send(
+            "Could not find any users in the Raid message.",
+            ephemeral=True,
+        )
+        return
+
+    # Sort alphabetically so the dropdown menu is easy to read
+    all_parsed_users.sort(key=lambda m: m.lower())
+
+    # Create and send the interactive view
+    view = GroupSelectView(all_parsed_users, accepted, maybe, destination)
+
+    await interaction.followup.send(
+        "**Roster Setup:** Please select the players below who belong in **Group A**.\n"
+       "*(Everyone else will automatically be placed in 'Without a team' when you click Confirm)*.",
+        view=view,
+        ephemeral=True,
+    )
+
+
+@BOT.tree.command(
     name="list-members",
     description="List server nicknames in a blank table (optional: filter by role)",
 )
@@ -611,6 +865,7 @@ async def list_members_cmd(
         await interaction.followup.send(chunk, ephemeral=True)
 
     log(f"[MEMBERS] Sent {len(message_chunks)} blank table messages to @{interaction.user.name}.")
+
 
 @BOT.tree.command(
     name="list-bosses",
