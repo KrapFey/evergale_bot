@@ -308,14 +308,15 @@ async def on_ready() -> None:
 
     guild = discord.Object(id=Config.GUILD_ID)
 
+    # 1. Completely clear all Global commands to destroy the duplicates and ghost commands
+    BOT.tree.clear_commands(guild=None)
+    await BOT.tree.sync(guild=None)
+
+    # 2. Copy our current commands directly to the server and sync ONLY there
     BOT.tree.copy_global_to(guild=guild)
     synced = await BOT.tree.sync(guild=guild)
 
-    # Explicitly overwrite global commands without wiping internal memory
-    await BOT.tree.sync(guild=None)
-
-    log(f"Synced {len(synced)} active commands to guild {Config.GUILD_ID}")
-
+    log(f"Cleared global cache and synced {len(synced)} commands to guild {Config.GUILD_ID}")
 
 @BOT.tree.command(
     name="clean",
