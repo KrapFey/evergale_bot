@@ -23,7 +23,6 @@ INTENTS.message_content = True
 
 BOT = commands.Bot(command_prefix="!", intents=INTENTS)
 
-
 def log(message: str) -> None:
     """Log a formatted message with a timestamp to the console and local log file."""
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -32,14 +31,12 @@ def log(message: str) -> None:
     with Path("app.log").open("a", encoding="utf-8") as log_file:
         log_file.write(formatted_msg + "\n")
 
-
 class Config:
     """Static configuration values for the bot."""
 
     GUILD_ID: int = int(os.getenv("GUILD_ID", 0))
     MAX_PURGE_SCAN: int = 1000
     RAID_HELPER_ID: int = 579155972115660803
-
 
 # ==========================================================
 # UI COMPONENTS
@@ -57,23 +54,17 @@ class RosterSelect(discord.ui.Select):
         """Handle selection silently."""
         await interaction.response.defer()
 
-
 class GroupSelectView(discord.ui.View):
     """Interactive view for roster selection."""
 
-    def __init__(
-        self,
-        accepted: list[str],
-        maybe: list[str],
-        destination: discord.TextChannel,
-    ) -> None:
+    def __init__(self, accepted: list[str], maybe: list[str],
+                 destination: discord.TextChannel) -> None:
         """Initialize view with separated dropdowns."""
         super().__init__(timeout=600)
         self.accepted = accepted
         self.maybe = maybe
         self.destination = destination
         self.selects = []
-
         if accepted:
             acc_chunks = [accepted[i : i + 25] for i in range(0, len(accepted), 25)]
             for i, chunk in enumerate(acc_chunks):
@@ -82,7 +73,6 @@ class GroupSelectView(discord.ui.View):
                 select = RosterSelect(options, placeholder=placeholder)
                 self.selects.append(select)
                 self.add_item(select)
-
         if maybe:
             may_chunks = [maybe[i : i + 25] for i in range(0, len(maybe), 25)]
             for i, chunk in enumerate(may_chunks):
@@ -93,24 +83,19 @@ class GroupSelectView(discord.ui.View):
                 self.add_item(select)
 
     @discord.ui.button(label="Confirm & Generate", style=discord.ButtonStyle.green, row=4)
-    async def confirm_btn(
-        self,
-        interaction: discord.Interaction,
-        _button: discord.ui.Button,
-    ) -> None:
+    async def confirm_btn(self, interaction: discord.Interaction,
+                          _button: discord.ui.Button) -> None:
         """Generate final color-coded report."""
-        await interaction.response.defer(ephemeral=True)
-        group_a_users = {user for select in self.selects for user in select.values}
-
         def get_icon(cat: str) -> str:
             return "🔴" if cat == "A" else "🟢" if cat == "D" else "🟠"
 
+        await interaction.response.defer(ephemeral=True)
+        group_a_users = {user for select in self.selects for user in select.values}
         acc_groups, may_groups = defaultdict(list), defaultdict(list)
         for name in self.accepted:
             acc_groups["A" if name in group_a_users else "D"].append(name)
         for name in self.maybe:
             may_groups["A" if name in group_a_users else "D"].append(name)
-
         embeds = []
         pad, stretcher = "\u2800" * 12, "\u2800" * 60
         for groups, title, color in [(acc_groups, "Accepted", discord.Color.green()),
@@ -125,18 +110,15 @@ class GroupSelectView(discord.ui.View):
                                  value=val[:1020] + "..." if len(val) > 1024 else val, inline=True)
                 em.set_footer(text=stretcher)
                 embeds.append(em)
-
         try:
             await self.destination.send(embeds=embeds)
             await interaction.followup.send("Report sent!", ephemeral=True)
         except discord.Forbidden:
             await interaction.followup.send("Lacking permissions.", ephemeral=True)
-
         for item in self.children:
             item.disabled = True
         await interaction.message.edit(view=self)
         self.stop()
-
 
 # ==========================================================
 # COMMAND GROUPS
@@ -517,12 +499,13 @@ BOT.tree.add_command(utility)
 @BOT.event
 async def on_ready() -> None:
     """Sync commands."""
+    log(f"Logged in as {BOT.user.display_name} (ID: {BOT.user.id})")
     guild = discord.Object(id=Config.GUILD_ID)
     BOT.tree.copy_global_to(guild=guild)
-    await BOT.tree.sync(guild=guild)
+    synced = await BOT.tree.sync(guild=guild)
     BOT.tree.clear_commands(guild=None)
     await BOT.tree.sync(guild=None)
-    log("Synced commands.")
+    log(f"Cleared global cache and synced {len(synced)} commands to guild {Config.GUILD_ID}")
 
 def main() -> int:
     """Entry point."""
