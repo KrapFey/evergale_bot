@@ -23,6 +23,22 @@ INTENTS.message_content = True
 
 BOT = commands.Bot(command_prefix="!", intents=INTENTS)
 
+ROLE_EMOJI_IDS = {
+    "Tank": 1463334115179888848,
+    "DPS": 1463333896308523060,
+    "Healer": 1463334404503113960,
+    "OTHER": 1443387107652403200,
+}
+
+def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None:
+    """Return the custom emoji object based on the user's highest relevant role."""
+    if not member:
+        return None
+    for role_name, emoji_id in ROLE_EMOJI_IDS.items():
+        if any(role.name == role_name for role in member.roles):
+            return discord.PartialEmoji(name=role_name, id=emoji_id)
+    return discord.PartialEmoji(name="Not Found", id=ROLE_EMOJI_IDS["OTHER"])
+
 def log(message: str) -> None:
     """Log a formatted message with a timestamp to the console and local log file."""
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -57,30 +73,27 @@ class RosterSelect(discord.ui.Select):
 class GroupSelectView(discord.ui.View):
     """Interactive view for roster selection."""
 
-    def __init__(self, accepted: list[str], maybe: list[str],
-                 destination: discord.TextChannel) -> None:
+    def __init__(self, accepted_data: list[tuple[str, discord.Member | None]],
+                       maybe_data: list[tuple[str, discord.Member | None]],
+                       destination: discord.TextChannel) -> None:
         """Initialize view with separated dropdowns."""
         super().__init__(timeout=600)
-        self.accepted = accepted
-        self.maybe = maybe
         self.destination = destination
+        self.accepted_data = accepted_data
+        self.maybe_data = maybe_data
         self.selects = []
-        if accepted:
-            acc_chunks = [accepted[i : i + 25] for i in range(0, len(accepted), 25)]
-            for i, chunk in enumerate(acc_chunks):
-                options = [discord.SelectOption(label=name) for name in chunk]
-                placeholder = f"✅ Group A (Accepted - Part {i+1})..."
-                select = RosterSelect(options, placeholder=placeholder)
+
+        def add_chunks(data_list: list[tuple[str, discord.Member | None]], prefix: str):
+            chunks = [data_list[i : i + 25] for i in range(0, len(data_list), 25)]
+            for i, chunk in enumerate(chunks):
+                options = [discord.SelectOption(label=name, value=name,emoji=get_role_emoji(member))
+                            for name, member in chunk]
+                select = RosterSelect(options, placeholder=f"{prefix} - Part {i+1}...")
                 self.selects.append(select)
                 self.add_item(select)
-        if maybe:
-            may_chunks = [maybe[i : i + 25] for i in range(0, len(maybe), 25)]
-            for i, chunk in enumerate(may_chunks):
-                options = [discord.SelectOption(label=name) for name in chunk]
-                placeholder = f"❔ Group A (Maybe - Part {i+1})..."
-                select = RosterSelect(options, placeholder=placeholder)
-                self.selects.append(select)
-                self.add_item(select)
+
+        add_chunks(accepted_data, "✅ Group Attack (Accepted")
+        add_chunks(maybe_data, "❔ Group Attack (Maybe")
 
     @discord.ui.button(label="Confirm & Generate", style=discord.ButtonStyle.green, row=4)
     async def confirm_btn(self, interaction: discord.Interaction,
@@ -337,9 +350,15 @@ async def roster_generate(interaction: discord.Interaction, raid_msg: str,
     if not accepted and not maybe:
         await interaction.followup.send("Could not find any users in the message.", ephemeral=True)
         return
-    accepted.sort(key=lambda m: m.lower())
-    maybe.sort(key=lambda m: m.lower())
-    view = GroupSelectView(accepted, maybe, destination)
+    resolved_accepted = []
+    for name in accepted:
+        member = interaction.guild.get_member_named(name)
+        resolved_accepted.append((name, member))
+    resolved_maybe = []
+    for name in maybe:
+        member = interaction.guild.get_member_named(name)
+        resolved_maybe.append((name, member))
+    view = GroupSelectView(resolved_accepted, resolved_maybe, destination)
     prompt = ("**Roster Setup:** Please select the players below who belong in **Group A**.\n"
             "*(Everyone else will automatically be placed in **Group D** when you click Confirm)*.")
     await interaction.followup.send(prompt, view=view, ephemeral=True)
