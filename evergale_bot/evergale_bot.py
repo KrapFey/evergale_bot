@@ -360,8 +360,8 @@ async def roster_generate(interaction: discord.Interaction, raid_msg: str,
         member = interaction.guild.get_member_named(name)
         resolved_maybe.append((name, member))
     view = GroupSelectView(resolved_accepted, resolved_maybe, destination)
-    prompt = ("**Roster Setup:** Please select the players below who belong in **Group A**.\n"
-            "*(Everyone else will automatically be placed in **Group D** when you click Confirm)*.")
+    prompt = ("**Roster Setup:** Please select the players below who belong in **Group Attack**.\n"
+      "*(Everyone else will automatically be placed in **Group Defense** when you click Confirm)*.")
     await interaction.followup.send(prompt, view=view, ephemeral=True)
 
 @utility.command(name="clean", description="Clean channel")
