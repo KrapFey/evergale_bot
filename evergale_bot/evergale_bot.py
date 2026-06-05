@@ -49,7 +49,7 @@ def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None
         return None
     for role_name, emoji_id in ROLE_EMOJI_IDS.items():
         if any(re.search(role_name, role.name, flags=re.IGNORECASE) for role in member.roles):
-            return discord.PartialEmoji(name=role_name, id=emoji_id)
+            return discord.PartialEmoji(name=role_name.lower().replace(" ", "_"), id=emoji_id)
     return discord.PartialEmoji(name="n_", id=ROLE_EMOJI_IDS["n_"])
 
 def log(message: str) -> None:
