@@ -32,7 +32,8 @@ ROLE_EMOJI_IDS = {
     "Bellstrike Splendor": 1512515406383026197,
     "Bamboocut Wind": 1512513817974800614,
     "Bamboocut Dust": 1512513402176798750,
-    "n_": 1503731711664455810,
+    "no": 1503731711664455810,
+    "plus1": 1512519048196522125,
 }
 
 
@@ -50,7 +51,7 @@ def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None
     for role_name, emoji_id in ROLE_EMOJI_IDS.items():
         if any(re.search(role_name, role.name, flags=re.IGNORECASE) for role in member.roles):
             return discord.PartialEmoji(name=role_name.lower().replace(" ", "_"), id=emoji_id)
-    return discord.PartialEmoji(name="n_", id=ROLE_EMOJI_IDS["n_"])
+    return discord.PartialEmoji(name="n_", id=ROLE_EMOJI_IDS["no"])
 
 def log(message: str) -> None:
     """Log a formatted message with a timestamp to the console and local log file."""
@@ -112,14 +113,15 @@ class GroupSelectView(discord.ui.View):
         group_a_users = {user for select in self.selects for user in select.values}
         acc_groups, may_groups = defaultdict(list), defaultdict(list)
         emoji_lookup = {}
+        icon = discord.PartialEmoji(name="plus1", id=ROLE_EMOJI_IDS["plus1"])
         for name, member in self.accepted_data:
             acc_groups["Attack" if name in group_a_users else "Defense"].append(name)
             emoji_obj = get_role_emoji(member)
-            emoji_lookup[name] = str(emoji_obj) if emoji_obj else "💢"
+            emoji_lookup[name] = str(emoji_obj) if emoji_obj else icon
         for name, member in self.maybe_data:
             may_groups["Attack" if name in group_a_users else "Defense"].append(name)
             emoji_obj = get_role_emoji(member)
-            emoji_lookup[name] = str(emoji_obj) if emoji_obj else "💢"
+            emoji_lookup[name] = str(emoji_obj) if emoji_obj else icon
         embeds = []
         pad, stretcher = "\u2800" * 12, "\u2800" * 60
         for groups, title, color in [(acc_groups, "Accepted", discord.Color.green()),
@@ -129,7 +131,7 @@ class GroupSelectView(discord.ui.View):
                                    color=color)
                 for cat in sorted(groups.keys()):
                     sorted_m = sorted(groups[cat], key=lambda m: m.lower())
-                    lines = [f"{emoji_lookup.get(m, '💢')} {m}" for m in sorted_m]
+                    lines = [f"{emoji_lookup.get(m, icon)} {m}" for m in sorted_m]
                     val = "\n".join(lines)
                     em.add_field(name=f"{get_icon(cat)} **{cat} ({len(sorted_m)})** {pad}",
                                  value=val[:1020] + "..." if len(val) > 1024 else val, inline=True)
