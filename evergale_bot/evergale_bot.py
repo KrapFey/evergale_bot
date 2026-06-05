@@ -27,7 +27,7 @@ ROLE_EMOJI_IDS = {
     "Tank": 1463334115179888848,
     "DPS": 1463333896308523060,
     "Healer": 1463334404503113960,
-    "OTHER": 1443387107652403200,
+    "n_": 1503731711664455810,
 }
 
 
@@ -45,7 +45,7 @@ def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None
     for role_name, emoji_id in ROLE_EMOJI_IDS.items():
         if any(re.search(role_name, role.name, flags=re.IGNORECASE) for role in member.roles):
             return discord.PartialEmoji(name=role_name, id=emoji_id)
-    return discord.PartialEmoji(name="Not Found", id=ROLE_EMOJI_IDS["OTHER"])
+    return discord.PartialEmoji(name="Not Found", id=ROLE_EMOJI_IDS["n_"])
 
 def log(message: str) -> None:
     """Log a formatted message with a timestamp to the console and local log file."""
@@ -110,11 +110,11 @@ class GroupSelectView(discord.ui.View):
         for name, member in self.accepted_data:
             acc_groups["Attack" if name in group_a_users else "Defense"].append(name)
             emoji_obj = get_role_emoji(member)
-            emoji_lookup[name] = str(emoji_obj) if emoji_obj else "👤"
+            emoji_lookup[name] = str(emoji_obj) if emoji_obj else "💢"
         for name, member in self.maybe_data:
             may_groups["Attack" if name in group_a_users else "Defense"].append(name)
             emoji_obj = get_role_emoji(member)
-            emoji_lookup[name] = str(emoji_obj) if emoji_obj else "👤"
+            emoji_lookup[name] = str(emoji_obj) if emoji_obj else "💢"
         embeds = []
         pad, stretcher = "\u2800" * 12, "\u2800" * 60
         for groups, title, color in [(acc_groups, "Accepted", discord.Color.green()),
@@ -124,7 +124,7 @@ class GroupSelectView(discord.ui.View):
                                    color=color)
                 for cat in sorted(groups.keys()):
                     sorted_m = sorted(groups[cat], key=lambda m: m.lower())
-                    lines = [f"{emoji_lookup.get(m, '👤')} {m}" for m in sorted_m]
+                    lines = [f"{emoji_lookup.get(m, '💢')} {m}" for m in sorted_m]
                     val = "\n".join(lines)
                     em.add_field(name=f"{get_icon(cat)} **{cat} ({len(sorted_m)})** {pad}",
                                  value=val[:1020] + "..." if len(val) > 1024 else val, inline=True)
