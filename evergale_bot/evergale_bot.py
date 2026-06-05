@@ -30,6 +30,14 @@ ROLE_EMOJI_IDS = {
     "OTHER": 1443387107652403200,
 }
 
+
+class Config:
+    """Static configuration values for the bot."""
+
+    GUILD_ID: int = int(os.getenv("GUILD_ID", 0))
+    MAX_PURGE_SCAN: int = 1_000
+    RAID_HELPER_ID: int = 579155972115660803
+
 def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None:
     """Return the custom emoji object based on the user's highest relevant role."""
     if not member:
@@ -46,13 +54,6 @@ def log(message: str) -> None:
     print(formatted_msg)
     with Path("app.log").open("a", encoding="utf-8") as log_file:
         log_file.write(formatted_msg + "\n")
-
-class Config:
-    """Static configuration values for the bot."""
-
-    GUILD_ID: int = int(os.getenv("GUILD_ID", 0))
-    MAX_PURGE_SCAN: int = 1000
-    RAID_HELPER_ID: int = 579155972115660803
 
 # ==========================================================
 # UI COMPONENTS
@@ -92,23 +93,23 @@ class GroupSelectView(discord.ui.View):
                 self.selects.append(select)
                 self.add_item(select)
 
-        add_chunks(accepted_data, "✅ Group Attack (Accepted")
-        add_chunks(maybe_data, "❔ Group Attack (Maybe")
+        add_chunks(accepted_data, "Attack (✅ Accepted)")
+        add_chunks(maybe_data, "Attack (❔ Maybe)")
 
     @discord.ui.button(label="Confirm & Generate", style=discord.ButtonStyle.green, row=4)
     async def confirm_btn(self, interaction: discord.Interaction,
                           _button: discord.ui.Button) -> None:
         """Generate final color-coded report."""
         def get_icon(cat: str) -> str:
-            return "🔴" if cat == "A" else "🟢" if cat == "D" else "🟠"
+            return "🔴" if cat == "Attack" else "🟢"
 
         await interaction.response.defer(ephemeral=True)
         group_a_users = {user for select in self.selects for user in select.values}
         acc_groups, may_groups = defaultdict(list), defaultdict(list)
-        for name in self.accepted:
-            acc_groups["A" if name in group_a_users else "D"].append(name)
-        for name in self.maybe:
-            may_groups["A" if name in group_a_users else "D"].append(name)
+        for name in self.accepted_data:
+            acc_groups["Attack" if name in group_a_users else "Defense"].append(name)
+        for name in self.maybe_data:
+            may_groups["Attack" if name in group_a_users else "Defense"].append(name)
         embeds = []
         pad, stretcher = "\u2800" * 12, "\u2800" * 60
         for groups, title, color in [(acc_groups, "Accepted", discord.Color.green()),
