@@ -106,10 +106,15 @@ class GroupSelectView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         group_a_users = {user for select in self.selects for user in select.values}
         acc_groups, may_groups = defaultdict(list), defaultdict(list)
-        for name, _member in self.accepted_data:
+        emoji_lookup = {}
+        for name, member in self.accepted_data:
             acc_groups["Attack" if name in group_a_users else "Defense"].append(name)
-        for name, _member in self.maybe_data:
+            emoji_obj = get_role_emoji(member)
+            emoji_lookup[name] = str(emoji_obj) if emoji_obj else "👤"
+        for name, member in self.maybe_data:
             may_groups["Attack" if name in group_a_users else "Defense"].append(name)
+            emoji_obj = get_role_emoji(member)
+            emoji_lookup[name] = str(emoji_obj) if emoji_obj else "👤"
         embeds = []
         pad, stretcher = "\u2800" * 12, "\u2800" * 60
         for groups, title, color in [(acc_groups, "Accepted", discord.Color.green()),
@@ -119,7 +124,8 @@ class GroupSelectView(discord.ui.View):
                                    color=color)
                 for cat in sorted(groups.keys()):
                     sorted_m = sorted(groups[cat], key=lambda m: m.lower())
-                    val = "\n".join(f"- {m}" for m in sorted_m)
+                    lines = [f"{emoji_lookup.get(m, '👤')} {m}" for m in sorted_m]
+                    val = "\n".join(lines)
                     em.add_field(name=f"{get_icon(cat)} **{cat} ({len(sorted_m)})** {pad}",
                                  value=val[:1020] + "..." if len(val) > 1024 else val, inline=True)
                 em.set_footer(text=stretcher)
