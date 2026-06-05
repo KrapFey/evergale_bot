@@ -35,7 +35,7 @@ def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None
     if not member:
         return None
     for role_name, emoji_id in ROLE_EMOJI_IDS.items():
-        if any(role.name == role_name for role in member.roles):
+        if any(re.search(role_name, role.name, flags=re.IGNORECASE) for role in member.roles):
             return discord.PartialEmoji(name=role_name, id=emoji_id)
     return discord.PartialEmoji(name="Not Found", id=ROLE_EMOJI_IDS["OTHER"])
 
