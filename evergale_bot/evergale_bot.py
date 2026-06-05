@@ -33,7 +33,7 @@ ROLE_EMOJI_IDS = {
     "Bamboocut Wind": 1512513817974800614,
     "Bamboocut Dust": 1512513402176798750,
     "no": 1503731711664455810,
-    "plus1": 1512519048196522125,
+    "multi": 1463334515605766249,
 }
 
 
@@ -113,7 +113,7 @@ class GroupSelectView(discord.ui.View):
         group_a_users = {user for select in self.selects for user in select.values}
         acc_groups, may_groups = defaultdict(list), defaultdict(list)
         emoji_lookup = {}
-        icon = discord.PartialEmoji(name="plus1", id=ROLE_EMOJI_IDS["plus1"])
+        icon = discord.PartialEmoji(name="hybrid", id=ROLE_EMOJI_IDS["multi"])
         for name, member in self.accepted_data:
             acc_groups["Attack" if name in group_a_users else "Defense"].append(name)
             emoji_obj = get_role_emoji(member)
