@@ -106,9 +106,9 @@ class GroupSelectView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         group_a_users = {user for select in self.selects for user in select.values}
         acc_groups, may_groups = defaultdict(list), defaultdict(list)
-        for name in self.accepted_data:
+        for name, _member in self.accepted_data:
             acc_groups["Attack" if name in group_a_users else "Defense"].append(name)
-        for name in self.maybe_data:
+        for name, _member in self.maybe_data:
             may_groups["Attack" if name in group_a_users else "Defense"].append(name)
         embeds = []
         pad, stretcher = "\u2800" * 12, "\u2800" * 60
