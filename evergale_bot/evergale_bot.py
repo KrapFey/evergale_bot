@@ -24,9 +24,14 @@ INTENTS.message_content = True
 BOT = commands.Bot(command_prefix="!", intents=INTENTS)
 
 ROLE_EMOJI_IDS = {
-    "Tank": 1463334115179888848,
-    "DPS": 1463333896308523060,
-    "Healer": 1463334404503113960,
+    "Stonesplit Strength": 1512515618153304204,
+    "Stonesplit Might": 1512515574402384113,
+    "Silkbind Jade": 1512515536561377420,
+    "Silkbind Deluge": 1512515502130331709,
+    "Bellstrike Umbra": 1512515461135466546,
+    "Bellstrike Splendor": 1512515406383026197,
+    "Bamboocut Wind": 1512513817974800614,
+    "Bamboocut Dust": 1512513402176798750,
     "n_": 1503731711664455810,
 }
 
@@ -101,7 +106,7 @@ class GroupSelectView(discord.ui.View):
                           _button: discord.ui.Button) -> None:
         """Generate final color-coded report."""
         def get_icon(cat: str) -> str:
-            return "🔴" if cat == "Attack" else "🟢"
+            return "⚔️" if cat == "Attack" else "🛡️"
 
         await interaction.response.defer(ephemeral=True)
         group_a_users = {user for select in self.selects for user in select.values}
