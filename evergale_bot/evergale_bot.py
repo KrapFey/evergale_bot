@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import json
 import os
 import random
 import re
@@ -78,23 +79,72 @@ class RosterSelect(discord.ui.Select):
         """Handle selection silently."""
         await interaction.response.defer()
 
+class RaidParser:
+    """Unified parser for extracting data from Raid-Helper messages."""
+
+    @staticmethod
+    def parse(msg: discord.Message) -> dict:
+        """Parse a Raid-Helper message and return the timestamp and user groups."""
+        raw_text_blocks = [msg.content]
+        for embed in msg.embeds:
+            if embed.title:
+                raw_text_blocks.append(embed.title)
+            if embed.description:
+                raw_text_blocks.append(embed.description)
+            for field in embed.fields:
+                raw_text_blocks.append(field.name)
+                raw_text_blocks.append(field.value)
+        raw_text = "\n".join(filter(None, raw_text_blocks))
+        ts_match = re.search(r"<t:(\d+)(?::[a-zA-Z])?>", raw_text)
+        timestamp = int(ts_match.group(1)) if ts_match else 0
+        text_no_emojis = re.sub(r"<a?:\w+:\d+>", "", raw_text)
+        text_cleaned = re.sub(r"[*_`~]", "", text_no_emojis)
+        lines = text_cleaned.split("\n")
+        data = {"Accepted": [], "Maybe": [], "Declined": []}
+        current_list = None
+        strip_pat = r"^[\s\u2000-\u200F\u2800\uFEFF\u00A0]+|[\s\u2000-\u200F\u2800\uFEFF\u00A0]+$"
+        for line in lines:
+            clean_line = re.sub(strip_pat, "", line)
+            if not clean_line:
+                continue
+            lower_line = clean_line.lower()
+            if "accepted" in lower_line and len(lower_line) < 40:
+                current_list = data["Accepted"]
+                continue
+            if ("maybe" in lower_line or "tentative" in lower_line) and len(lower_line) < 40:
+                current_list = data["Maybe"]
+                continue
+            if any(w in lower_line for w in ("declined", "absence", "late"))\
+                and len(lower_line) < 40:
+                current_list = data["Declined"]
+                continue
+            if current_list is not None:
+                match = re.match(r"^\D*?(\d+)[.,:;\s\u00A0]+(.+)$", clean_line)
+                if match:
+                    name = match.group(2).strip()
+                    current_list.append(name)
+        return {"timestamp": timestamp, "groups": data}
+
 class GroupSelectView(discord.ui.View):
     """Interactive view for roster selection."""
 
     def __init__(self, accepted_data: list[tuple[str, discord.Member | None]],
                        maybe_data: list[tuple[str, discord.Member | None]],
-                       destination: discord.TextChannel) -> None:
-        """Initialize view with separated dropdowns."""
+                       destination: discord.TextChannel,
+                       event_time: str) -> None:
+        """Initialize view with separated dropdowns and event time."""
         super().__init__(timeout=600)
         self.destination = destination
         self.accepted_data = accepted_data
         self.maybe_data = maybe_data
+        self.event_time = event_time
         self.selects = []
 
         def add_chunks(data_list: list[tuple[str, discord.Member | None]], prefix: str):
             chunks = [data_list[i : i + 25] for i in range(0, len(data_list), 25)]
             for i, chunk in enumerate(chunks):
-                options = [discord.SelectOption(label=name, value=name,emoji=get_role_emoji(member))
+                options = [discord.SelectOption(label=name, value=name,
+                                                emoji=get_role_emoji(member))
                             for name, member in chunk]
                 select = RosterSelect(options, placeholder=f"{prefix} - Part {i+1}...")
                 self.selects.append(select)
@@ -378,6 +428,61 @@ async def roster_generate(interaction: discord.Interaction, raid_msg: str,
       "*(Everyone else will automatically be placed in **Group Defense** when you click Confirm)*.")
     await interaction.followup.send(prompt, view=view, ephemeral=True)
 
+@roster.command(name="attendance", description="Generate an attendance report")
+@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.describe(
+    tag="Which event tag to generate a report for",
+    start_date="Start date (YYYY-MM-DD)",
+    end_date="End date (YYYY-MM-DD)",
+)
+async def roster_attendance(
+    interaction: discord.Interaction,
+    tag: Literal["<gvg_sat>", "<gvg_sun>", "<gvg_all>", "<hero_realm>", "<group_pvp>",
+                 "<united_resolve>"],
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> None:
+    """Generate attendance leaderboard in custom format."""
+    await interaction.response.defer()
+    start_ts = 0
+    if start_date:
+        start_ts= int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp())
+    end_ts = 9_999_999_999
+    if end_date:
+        end_ts = int(datetime.datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23,
+                                                                              minute=59).timestamp())
+    clean_tag = tag.replace("<", "").replace(">", "")
+    report_file = Path(f"reports/{clean_tag}.json")
+    if not report_file.exists():
+        await interaction.followup.send("No records found.", ephemeral=True)
+        return
+    with report_file.open("r", encoding="utf-8") as f:
+        report_data = json.load(f)
+    stats = defaultdict(lambda: {"Accepted": 0, "Maybe": 0, "Declined": 0})
+    total_events = 0
+    for ts_str, groups in report_data.items():
+        if start_ts <= int(ts_str) <= end_ts:
+            total_events += 1
+            for grp in ["Accepted", "Maybe", "Declined"]:
+                for player in groups.get(grp, []):
+                    stats[player][grp] += 1
+    if total_events == 0:
+        await interaction.followup.send("No events in this range.", ephemeral=True)
+        return
+    embed = discord.Embed(title=f"📊 Attendance: {clean_tag}", color=discord.Color.blue())
+    embed.add_field(name=f"Total Events: `{total_events}`",
+                    value="`A` - Accepted | `M` - Maybe | `D` - Declined | `%` - Attendance",
+                    inline=False)
+    player_list = sorted(stats.items(), key=lambda x: (x[1]["Accepted"]/total_events), reverse=True)
+    desc = ""
+    for player, counts in player_list:
+        perc = (counts["Accepted"] / total_events) * 100
+        desc += (f"{player.ljust(15)} A: `{counts['Accepted']}` "
+                 f"M: `{counts['Maybe']}` D: `{counts['Declined']}` "
+                 f"%: `{perc:.1f}%`\n")
+    embed.description = desc if len(desc) < 4096 else desc[:4090] + "..."
+    await interaction.followup.send(embed=embed)
+
 @utility.command(name="clean", description="Clean channel")
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(filter_value="Which messages to remove: all | bots | user",
@@ -457,7 +562,7 @@ async def util_clean(interaction: discord.Interaction, filter_value: str = "all"
     await interaction.followup.send(f"Clean complete — removed **{deleted_count}** msgs "
                                     f"(filter: **{filter_value}**).", ephemeral=True)
 
-@utility.command(name="archive", description="Archive raids")
+@utility.command(name="archive", description="Archive raids and save attendance information")
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(source="The channel to search for the Raid-Helper messages",
                                destination="The channel to move the messages to",
@@ -469,48 +574,46 @@ async def util_archive(interaction: discord.Interaction, source: discord.TextCha
                        tag: Literal["<gvg_sat>", "<gvg_sun>", "<gvg_all>", "<hero_realm>",
                                     "<group_pvp>", "<united_resolve>"],
                        archive_limit: int = 50, scan_limit: int = 200) -> None:
-    """Archive raid logic."""
+    """Archive raid messages and extract roster JSON."""
     log(f"[ARCHIVE] Initiated by @{interaction.user.display_name} | From: #{source.name} "
-        f"-> To: #{destination.name} | Tag: {tag} | Max Archive: {archive_limit} "
-        f"| Scan depth: {scan_limit}")
+        f"-> To: #{destination.name} | Tag: {tag}")
     await interaction.response.defer(ephemeral=True)
     if not interaction.user.guild_permissions.manage_messages:
-        log(f"[ARCHIVE] Failed: @{interaction.user.display_name} lacks Manage Messages perm.")
-        await interaction.followup.send("You need Manage Messages permission to use this.",
-                                        ephemeral=True)
+        await interaction.followup.send("You need Manage Messages permission.", ephemeral=True)
         return
     target_messages: list[discord.Message] = []
     try:
-        log(f"[ARCHIVE] Scanning {scan_limit} messages in #{source.name}...")
         async for msg in source.history(limit=scan_limit):
             if msg.author.id == Config.RAID_HELPER_ID:
-                tag_found = False
-                for embed in msg.embeds:
-                    if tag.lower() in str(embed.to_dict()).lower():
-                        tag_found = True
-                        break
-                if not tag_found:
-                    continue
-                target_messages.append(msg)
+                tag_found = any(tag.lower() in str(embed.to_dict()).lower() for embed in msg.embeds)
+                if tag_found:
+                    target_messages.append(msg)
                 if len(target_messages) >= archive_limit:
                     break
     except discord.Forbidden:
-        log(f"[ARCHIVE] Failed: Bot cannot read history in #{source.name}.")
-        await interaction.followup.send("I don't have permission to read message history "
-                                        f"in {source.mention}.", ephemeral=True)
-        return
-    if not target_messages:
-        log("[ARCHIVE] Success/Empty: No matching Raid-Helper messages found.")
-        await interaction.followup.send("Could not find any Raid-Helper messages containing the "
-                                        f"tag `{tag}` in the last {scan_limit} messages "
-                                        f"of {source.mention}.",
+        await interaction.followup.send(f"I lack permission to read {source.mention}.",
                                         ephemeral=True)
         return
+    if not target_messages:
+        await interaction.followup.send(f"No messages found with `{tag}`.", ephemeral=True)
+        return
+    # Setup local JSON reporting database
+    clean_tag = tag.replace("<", "").replace(">", "")
+    report_file = Path(f"reports/{clean_tag}.json")
+    report_file.parent.mkdir(parents=True, exist_ok=True)
+    report_data = {}
+    if report_file.exists():
+        with report_file.open("r", encoding="utf-8") as f:
+            try:
+                report_data = json.load(f)
+            except json.JSONDecodeError:
+                report_data = {}
     target_messages.reverse()
-    archived_count = 0
-    failed_count = 0
-    log(f"[ARCHIVE] Starting to forward and delete {len(target_messages)} messages...")
+    archived_count, failed_count = 0, 0
     for msg in target_messages:
+        parsed = RaidParser.parse(msg)
+        timestamp_key = str(parsed["timestamp"])
+        report_data[timestamp_key] = parsed["groups"]
         try:
             await msg.forward(destination)
             await msg.delete()
@@ -520,10 +623,11 @@ async def util_archive(interaction: discord.Interaction, source: discord.TextCha
             log(f"[ARCHIVE] Warning: Failed to move message ID {msg.id}: {e}")
             failed_count += 1
             continue
-    log(f"[ARCHIVE] Complete: {archived_count} moved, {failed_count} failed.")
-    fail_txt = f" ({failed_count} failed due to API errors)" if failed_count > 0 else ""
+    with report_file.open("w", encoding="utf-8") as f:
+        json.dump(report_data, f, indent=4)
+    fail_txt = f" ({failed_count} failed)" if failed_count > 0 else ""
     await interaction.followup.send(f"**Archive Complete!**\n"
-                                    f"Moved **{archived_count}** Raid-Helper messages "
+                                    f"Moved **{archived_count}** Raid-Helper message "
                                     f"to {destination.mention}. {fail_txt}", ephemeral=True)
 
 # Add groups to tree
