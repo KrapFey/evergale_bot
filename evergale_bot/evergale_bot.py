@@ -440,7 +440,7 @@ async def roster_attendance(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> None:
-    """Generate attendance leaderboard in custom tabular format."""
+    """Generate attendance leaderboard dynamically padded."""
     await interaction.response.defer()
     try:
         start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp()) \
@@ -470,17 +470,23 @@ async def roster_attendance(
         return
     embed = discord.Embed(title=f"📊 Attendance: {clean_tag}", color=discord.Color.blue())
     player_list = sorted(stats.items(), key=lambda x: (x[1]["Accepted"] / total_events),
-                            reverse=True)
+                         reverse=True)
+    max_name_len = max((len(p) for p, _ in player_list), default=0)
+    pad_len = min(max_name_len, 20)
     desc = ""
     for player, counts in player_list:
         perc = (counts["Accepted"] / total_events) * 100
-        desc += (f"{player} A: `{counts['Accepted']}` M: `{counts['Maybe']}` "
-                    f"D: `{counts['Declined']}` %: `{perc:.1f}%`\n")
+        p_name = player[:pad_len].ljust(pad_len)
+        line = (f"{p_name} A: `{counts['Accepted']}` M: `{counts['Maybe']}` "
+                f"D: `{counts['Declined']}` %: `{perc:.1f}%`\n")
+        desc += line
     embed.description = desc if len(desc) < 4096 else desc[:4090] + "..."
     embed.add_field(name="Total Events:", value=f"`{total_events}`", inline=False)
-    embed.add_field(name="Legend:",
-                    value="`A` - Accepted | `M` - Maybe | `D` - Declined | `%` - Attendance",
-                    inline=False)
+    embed.add_field(
+        name="Legend:",
+        value="`A` - Accepted | `M` - Maybe | `D` - Declined | `%` - Attendance",
+        inline=False,
+    )
     await interaction.followup.send(embed=embed)
 
 @utility.command(name="clean", description="Clean channel")
