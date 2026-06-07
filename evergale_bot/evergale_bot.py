@@ -24,14 +24,14 @@ INTENTS.message_content = True
 BOT = commands.Bot(command_prefix="!", intents=INTENTS)
 
 ROLE_EMOJI_IDS = {
-    "Stonesplit Strength": 1512524324026712074,
-    "Stonesplit Might": 1512524267177377873,
-    "Silkbind Jade": 1512524216635752478,
-    "Silkbind Deluge": 1512524156376322078,
-    "Bellstrike Umbra": 1512524090374619267,
-    "Bellstrike Splendor": 1512524043574575124,
-    "Bamboocut Wind": 1512523965959110707,
-    "Bamboocut Dust": 1512523858496983060,
+    "Stonesplit Strength": 1512515618153304204,
+    "Stonesplit Might": 1512515574402384113,
+    "Silkbind Jade": 1512515536561377420,
+    "Silkbind Deluge": 1512515502130331709,
+    "Bellstrike Umbra": 1512515461135466546,
+    "Bellstrike Splendor": 1512515406383026197,
+    "Bamboocut Wind": 1512513817974800614,
+    "Bamboocut Dust": 1512513402176798750,
     "no": 1503731711664455810,
     "multi": 1463334515605766249,
 }
