@@ -130,14 +130,12 @@ class GroupSelectView(discord.ui.View):
 
     def __init__(self, accepted_data: list[tuple[str, discord.Member | None]],
                        maybe_data: list[tuple[str, discord.Member | None]],
-                       destination: discord.TextChannel,
-                       event_time: str) -> None:
+                       destination: discord.TextChannel) -> None:
         """Initialize view with separated dropdowns and event time."""
         super().__init__(timeout=600)
         self.destination = destination
         self.accepted_data = accepted_data
         self.maybe_data = maybe_data
-        self.event_time = event_time
         self.selects = []
 
         def add_chunks(data_list: list[tuple[str, discord.Member | None]], prefix: str):
