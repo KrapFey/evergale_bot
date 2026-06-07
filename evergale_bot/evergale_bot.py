@@ -476,7 +476,9 @@ async def roster_attendance(
     desc = ""
     for player, counts in player_list:
         perc = (counts["Accepted"] / total_events) * 100
-        p_name = player[:pad_len].ljust(pad_len)
+        truncated_name = player[:pad_len]
+        pad_spaces = "\u2800" * (pad_len - len(truncated_name) + 1)
+        p_name = truncated_name + pad_spaces
         line = (f"{p_name} A: `{counts['Accepted']}` M: `{counts['Maybe']}` "
                 f"D: `{counts['Declined']}` %: `{perc:.1f}%`\n")
         desc += line
