@@ -468,20 +468,19 @@ async def roster_attendance(
     if total_events == 0:
         await interaction.followup.send("No events in this range.", ephemeral=True)
         return
-    embed = discord.Embed(title=f"## {clean_tag}", color=discord.Color.blue())
-    embed.add_field(name=f"### Total Events: `{total_events}`",
-                    value="`A` - Accepted | `M` - Maybe | `D` - Declined | `%` - Attendance",
-                    inline=False)
+    embed = discord.Embed(title=f"📊 Attendance: {clean_tag}", color=discord.Color.blue())
     player_list = sorted(stats.items(), key=lambda x: (x[1]["Accepted"] / total_events),
-                         reverse=True)
-    desc = "```\n"
+                            reverse=True)
+    desc = ""
     for player, counts in player_list:
         perc = (counts["Accepted"] / total_events) * 100
-        desc += (f"{player[:12].ljust(12)} A: `{counts['Accepted']:<2}` "
-                 f"M: `{counts['Maybe']:<2}` D: `{counts['Declined']:<2}` "
-                 f"%: `{perc:>5.1f}%`\n")
-    desc += "```"
+        desc += (f"{player} A: `{counts['Accepted']}` M: `{counts['Maybe']}` "
+                    f"D: `{counts['Declined']}` %: `{perc:.1f}%`\n")
     embed.description = desc if len(desc) < 4096 else desc[:4090] + "..."
+    embed.add_field(name="Total Events:", value=f"`{total_events}`", inline=False)
+    embed.add_field(name="Legend:",
+                    value="`A` - Accepted | `M` - Maybe | `D` - Declined | `%` - Attendance",
+                    inline=False)
     await interaction.followup.send(embed=embed)
 
 @utility.command(name="clean", description="Clean channel")
