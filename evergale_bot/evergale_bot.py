@@ -10,7 +10,6 @@ import re
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Literal
 
 import discord
 from discord.ext import commands
@@ -46,7 +45,13 @@ class Config:
     GUILD_ID: int = int(os.getenv("GUILD_ID", 0))
     MAX_PURGE_SCAN: int = 1_000
     RAID_HELPER_ID: int = 579155972115660803
-
+    EVENT_TAGS: list[str] = [
+            "<gvg_sat>",
+            "<gvg_sun>",
+            "<hero_realm>",
+            "<group_pvp>",
+            "<united_resolve>",
+        ]
 
 def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None:
     """Return the custom emoji object based on the user's highest relevant role."""
@@ -446,10 +451,12 @@ async def roster_generate(interaction: discord.Interaction, raid_msg: str,
     start_date="Start date (YYYY-MM-DD)",
     end_date="End date (YYYY-MM-DD)",
 )
+@discord.app_commands.choices(tag=[
+    discord.app_commands.Choice(name="<gvg_all>", value="<gvg_all>"),
+] + [discord.app_commands.Choice(name=t, value=t) for t in Config.EVENT_TAGS])
 async def roster_attendance(
     interaction: discord.Interaction,
-    tag: Literal["<gvg_sat>", "<gvg_sun>", "<gvg_all>", "<hero_realm>", "<group_pvp>",
-                 "<united_resolve>"],
+    tag: str,
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> None:
@@ -595,10 +602,12 @@ async def util_clean(interaction: discord.Interaction, filter_value: str = "all"
                                tag="The specific event tag to archive",
                                archive_limit="Max matched messages to archive (default 50)",
                                scan_limit="How many messages back to search overall (default 200)")
+@discord.app_commands.choices(tag=[
+    discord.app_commands.Choice(name=t, value=t) for t in Config.EVENT_TAGS
+])
 async def util_archive(interaction: discord.Interaction, source: discord.TextChannel,
                        destination: discord.TextChannel,
-                       tag: Literal["<gvg_sat>", "<gvg_sun>", "<hero_realm>",
-                                    "<group_pvp>", "<united_resolve>"],
+                       tag: str,
                        archive_limit: int = 50, scan_limit: int = 200) -> None:
     """Archive raid messages and extract roster JSON."""
     log(f"[ARCHIVE] Initiated by @{interaction.user.display_name} | From: #{source.name} "
