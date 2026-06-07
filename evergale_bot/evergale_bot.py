@@ -1,6 +1,7 @@
 """Evergale BOT — utilities for cleaning channels, archiving, and roster management."""
 
 import asyncio
+import contextlib
 import datetime
 import json
 import os
@@ -46,6 +47,7 @@ class Config:
     MAX_PURGE_SCAN: int = 1_000
     RAID_HELPER_ID: int = 579155972115660803
 
+
 def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None:
     """Return the custom emoji object based on the user's highest relevant role."""
     if not member:
@@ -55,6 +57,7 @@ def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None
             return discord.PartialEmoji(name=role_name.lower().replace(" ", "_"), id=emoji_id)
     return discord.PartialEmoji(name="n_", id=ROLE_EMOJI_IDS["no"])
 
+
 def log(message: str) -> None:
     """Log a formatted message with a timestamp to the console and local log file."""
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -62,6 +65,7 @@ def log(message: str) -> None:
     print(formatted_msg)
     with Path("app.log").open("a", encoding="utf-8") as log_file:
         log_file.write(formatted_msg + "\n")
+
 
 # ==========================================================
 # UI COMPONENTS
@@ -73,11 +77,12 @@ class RosterSelect(discord.ui.Select):
     def __init__(self, options: list[discord.SelectOption], placeholder: str) -> None:
         """Initialize the multi-select dropdown."""
         super().__init__(placeholder=placeholder, min_values=0, max_values=len(options),
-                        options=options)
+                         options=options)
 
     async def callback(self, interaction: discord.Interaction) -> None:
         """Handle selection silently."""
         await interaction.response.defer()
+
 
 class RaidParser:
     """Unified parser for extracting data from Raid-Helper messages."""
@@ -124,6 +129,7 @@ class RaidParser:
                     name = match.group(2).strip()
                     current_list.append(name)
         return {"timestamp": timestamp, "groups": data}
+
 
 class GroupSelectView(discord.ui.View):
     """Interactive view for roster selection."""
@@ -196,6 +202,7 @@ class GroupSelectView(discord.ui.View):
         await interaction.message.edit(view=self)
         self.stop()
 
+
 # ==========================================================
 # COMMAND GROUPS
 # ==========================================================
@@ -203,6 +210,7 @@ class GroupSelectView(discord.ui.View):
 boss = discord.app_commands.Group(name="boss", description="Boss database management")
 roster = discord.app_commands.Group(name="roster", description="Raid roster management")
 utility = discord.app_commands.Group(name="utility", description="General utility commands")
+
 
 @boss.command(name="list", description="List all bosses")
 async def boss_list(interaction: discord.Interaction) -> None:
@@ -237,6 +245,7 @@ async def boss_list(interaction: discord.Interaction) -> None:
     if chunk:
         await interaction.followup.send(chunk, ephemeral=True)
 
+
 @boss.command(name="add", description="Add a boss")
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(name="The name of the boss to add (can contain spaces)")
@@ -260,9 +269,10 @@ async def boss_add(interaction: discord.Interaction, name: str) -> None:
     await interaction.followup.send(f"Successfully added **{boss_name}** to the boss list!",
                                     ephemeral=True)
 
+
 @boss.command(name="remove", description="Remove a boss")
 @discord.app_commands.default_permissions(administrator=True)
-@discord.app_commands.describe(identifier="The exact name or the list number of the boss to remove")
+@discord.app_commands.describe(identifier="Exact name or list number of the boss to remove")
 async def boss_remove(interaction: discord.Interaction, identifier: str) -> None:
     """Remove boss by name or index."""
     identifier = identifier.strip()
@@ -314,6 +324,7 @@ async def boss_remove(interaction: discord.Interaction, identifier: str) -> None
     await interaction.followup.send(f"Successfully removed **{removed_boss_name}** "
                                     "from the boss list!", ephemeral=True)
 
+
 @boss.command(name="random", description="Get a random boss")
 async def boss_random(interaction: discord.Interaction) -> None:
     """Pick random boss."""
@@ -337,6 +348,7 @@ async def boss_random(interaction: discord.Interaction) -> None:
         return
     selected_boss = random.choice(bosses)
     await interaction.followup.send(f"🎲 The randomly selected boss is: **{selected_boss}**!")
+
 
 @roster.command(name="generate", description="Generate report")
 @discord.app_commands.default_permissions(administrator=True)
@@ -426,6 +438,7 @@ async def roster_generate(interaction: discord.Interaction, raid_msg: str,
       "*(Everyone else will automatically be placed in **Group Defense** when you click Confirm)*.")
     await interaction.followup.send(prompt, view=view, ephemeral=True)
 
+
 @roster.command(name="attendance", description="Generate an attendance report")
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(
@@ -451,12 +464,19 @@ async def roster_attendance(
         await interaction.followup.send("❌ Use `YYYY-MM-DD` format.", ephemeral=True)
         return
     clean_tag = tag.replace("<", "").replace(">", "")
-    report_file = Path(f"reports/{clean_tag}.json")
-    if not report_file.exists():
+    if clean_tag == "gvg_all":
+        files_to_load = [Path("reports/gvg_sat.json"), Path("reports/gvg_sun.json")]
+    else:
+        files_to_load = [Path(f"reports/{clean_tag}.json")]
+    report_data = {}
+    for r_file in files_to_load:
+        if r_file.exists():
+            with r_file.open("r", encoding="utf-8") as f:  # noqa: SIM117
+                with contextlib.suppress(json.JSONDecodeError):
+                    report_data.update(json.load(f))
+    if not report_data:
         await interaction.followup.send("No records found.", ephemeral=True)
         return
-    with report_file.open("r", encoding="utf-8") as f:
-        report_data = json.load(f)
     stats = defaultdict(lambda: {"Accepted": 0, "Maybe": 0, "Declined": 0})
     total_events = 0
     for ts_str, groups in report_data.items():
@@ -486,6 +506,7 @@ async def roster_attendance(
                     value="`A` - Accepted | `M` - Maybe | `D` - Declined | `%` - Attendance",
                     inline=False)
     await interaction.followup.send(embed=embed)
+
 
 @utility.command(name="clean", description="Clean channel")
 @discord.app_commands.default_permissions(administrator=True)
@@ -566,6 +587,7 @@ async def util_clean(interaction: discord.Interaction, filter_value: str = "all"
     await interaction.followup.send(f"Clean complete — removed **{deleted_count}** msgs "
                                     f"(filter: **{filter_value}**).", ephemeral=True)
 
+
 @utility.command(name="archive", description="Archive raids and save attendance information")
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(source="The channel to search for the Raid-Helper messages",
@@ -575,7 +597,7 @@ async def util_clean(interaction: discord.Interaction, filter_value: str = "all"
                                scan_limit="How many messages back to search overall (default 200)")
 async def util_archive(interaction: discord.Interaction, source: discord.TextChannel,
                        destination: discord.TextChannel,
-                       tag: Literal["<gvg_sat>", "<gvg_sun>", "<gvg_all>", "<hero_realm>",
+                       tag: Literal["<gvg_sat>", "<gvg_sun>", "<hero_realm>",
                                     "<group_pvp>", "<united_resolve>"],
                        archive_limit: int = 50, scan_limit: int = 200) -> None:
     """Archive raid messages and extract roster JSON."""
@@ -601,7 +623,6 @@ async def util_archive(interaction: discord.Interaction, source: discord.TextCha
     if not target_messages:
         await interaction.followup.send(f"No messages found with `{tag}`.", ephemeral=True)
         return
-    # Setup local JSON reporting database
     clean_tag = tag.replace("<", "").replace(">", "")
     report_file = Path(f"reports/{clean_tag}.json")
     report_file.parent.mkdir(parents=True, exist_ok=True)
@@ -634,10 +655,12 @@ async def util_archive(interaction: discord.Interaction, source: discord.TextCha
                                     f"Moved **{archived_count}** Raid-Helper message "
                                     f"to {destination.mention}. {fail_txt}", ephemeral=True)
 
+
 # Add groups to tree
 BOT.tree.add_command(boss)
 BOT.tree.add_command(roster)
 BOT.tree.add_command(utility)
+
 
 @BOT.event
 async def on_ready() -> None:
@@ -649,6 +672,7 @@ async def on_ready() -> None:
     BOT.tree.clear_commands(guild=None)
     await BOT.tree.sync(guild=None)
     log(f"Cleared global cache and synced {len(synced)} commands to guild {Config.GUILD_ID}")
+
 
 def main() -> int:
     """Entry point."""
