@@ -82,21 +82,18 @@ class GroupSelectView(discord.ui.View):
 
     def __init__(self, accepted_data: list[tuple[str, discord.Member | None]],
                        maybe_data: list[tuple[str, discord.Member | None]],
-                       destination: discord.TextChannel,
-                       event_time: str | None = None) -> None:
-        """Initialize view with separated dropdowns and event time."""
+                       destination: discord.TextChannel) -> None:
+        """Initialize view with separated dropdowns."""
         super().__init__(timeout=600)
         self.destination = destination
         self.accepted_data = accepted_data
         self.maybe_data = maybe_data
-        self.event_time = event_time
         self.selects = []
 
         def add_chunks(data_list: list[tuple[str, discord.Member | None]], prefix: str):
             chunks = [data_list[i : i + 25] for i in range(0, len(data_list), 25)]
             for i, chunk in enumerate(chunks):
-                options = [discord.SelectOption(label=name, value=name,
-                                                emoji=get_role_emoji(member))
+                options = [discord.SelectOption(label=name, value=name,emoji=get_role_emoji(member))
                             for name, member in chunk]
                 select = RosterSelect(options, placeholder=f"{prefix} - Part {i+1}...")
                 self.selects.append(select)
@@ -127,12 +124,10 @@ class GroupSelectView(discord.ui.View):
             emoji_lookup[name] = str(emoji_obj) if emoji_obj else icon
         embeds = []
         pad, stretcher = "\u2800" * 12, "\u2800" * 60
-        desc = f"📅 **Event Time:** {self.event_time}" if self.event_time else None
         for groups, title, color in [(acc_groups, "Accepted", discord.Color.green()),
                                      (may_groups, "Maybe", discord.Color.gold())]:
             if groups:
                 em = discord.Embed(title=f"{title} ({sum(len(m) for m in groups.values())})",
-                                   description=desc,
                                    color=color)
                 for cat in sorted(groups.keys()):
                     sorted_m = sorted(groups[cat], key=lambda m: m.lower())
@@ -341,8 +336,6 @@ async def roster_generate(interaction: discord.Interaction, raid_msg: str,
             raw_text_blocks.append(field.name)
             raw_text_blocks.append(field.value)
     raw_text = "\n".join(filter(None, raw_text_blocks))
-    ts_match = re.search(r"(<t:\d+(?::[FfDdtT])?>)", raw_text)
-    event_time = ts_match.group(1) if ts_match else None
     text_no_emojis = re.sub(r"<a?:\w+:\d+>", "", raw_text)
     text_cleaned = re.sub(r"[*_`~]", "", text_no_emojis)
     lines = text_cleaned.split("\n")
@@ -379,7 +372,7 @@ async def roster_generate(interaction: discord.Interaction, raid_msg: str,
     for name in maybe:
         member = interaction.guild.get_member_named(name)
         resolved_maybe.append((name, member))
-    view = GroupSelectView(resolved_accepted, resolved_maybe, destination, event_time)
+    view = GroupSelectView(resolved_accepted, resolved_maybe, destination)
     prompt = ("**Roster Setup:** Please select the players below who belong in **Group Attack**.\n"
       "*(Everyone else will automatically be placed in **Group Defense** when you click Confirm)*.")
     await interaction.followup.send(prompt, view=view, ephemeral=True)
