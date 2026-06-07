@@ -53,18 +53,14 @@ class Config:
             "<united_resolve>",
         ]
 
-def get_role_emoji(client: discord.Client, member: discord.Member | None) -> str:
+def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None:
     """Return the custom emoji object based on the user's highest relevant role."""
-    fallback = str(discord.PartialEmoji(name="hybrid", id=ROLE_EMOJI_IDS["multi"]))
     if not member:
-        return fallback
+        return None
     for role_name, emoji_id in ROLE_EMOJI_IDS.items():
         if any(re.search(role_name, role.name, flags=re.IGNORECASE) for role in member.roles):
-            emoji_obj = client.get_emoji(emoji_id)
-            return str(emoji_obj) if emoji_obj else str(
-                discord.PartialEmoji(name=role_name.lower().replace(" ", "_"), id=emoji_id),
-            )
-    return fallback
+            return discord.PartialEmoji(name=role_name.lower().replace(" ", "_"), id=emoji_id)
+    return discord.PartialEmoji(name="n_", id=ROLE_EMOJI_IDS["no"])
 
 
 def log(message: str) -> None:
@@ -145,20 +141,19 @@ class GroupSelectView(discord.ui.View):
 
     def __init__(self, accepted_data: list[tuple[str, discord.Member | None]],
                        maybe_data: list[tuple[str, discord.Member | None]],
-                       destination: discord.TextChannel, client: discord.Client) -> None:
+                       destination: discord.TextChannel) -> None:
         """Initialize view with separated dropdowns and event time."""
         super().__init__(timeout=600)
         self.destination = destination
         self.accepted_data = accepted_data
         self.maybe_data = maybe_data
-        self.client = client
         self.selects = []
 
         def add_chunks(data_list: list[tuple[str, discord.Member | None]], prefix: str):
             chunks = [data_list[i : i + 25] for i in range(0, len(data_list), 25)]
             for i, chunk in enumerate(chunks):
                 options = [discord.SelectOption(label=name, value=name,
-                                                emoji=get_role_emoji(self.client, member))
+                                                emoji=get_role_emoji(member))
                             for name, member in chunk]
                 select = RosterSelect(options, placeholder=f"{prefix} - Part {i+1}...")
                 self.selects.append(select)
@@ -181,11 +176,11 @@ class GroupSelectView(discord.ui.View):
         icon = discord.PartialEmoji(name="hybrid", id=ROLE_EMOJI_IDS["multi"])
         for name, member in self.accepted_data:
             acc_groups["Attack" if name in group_a_users else "Defense"].append(name)
-            emoji_obj = get_role_emoji(self.client, member)
+            emoji_obj = get_role_emoji(member)
             emoji_lookup[name] = str(emoji_obj) if emoji_obj else icon
         for name, member in self.maybe_data:
             may_groups["Attack" if name in group_a_users else "Defense"].append(name)
-            emoji_obj = get_role_emoji(self.client, member)
+            emoji_obj = get_role_emoji(member)
             emoji_lookup[name] = str(emoji_obj) if emoji_obj else icon
         embeds = []
         pad, stretcher = "\u2800" * 12, "\u2800" * 60
@@ -443,7 +438,7 @@ async def roster_generate(interaction: discord.Interaction, raid_msg: str,
     for name in maybe:
         member = interaction.guild.get_member_named(name)
         resolved_maybe.append((name, member))
-    view = GroupSelectView(resolved_accepted, resolved_maybe, destination, interaction.client)
+    view = GroupSelectView(resolved_accepted, resolved_maybe, destination)
     prompt = ("**Roster Setup:** Please select the players below who belong in **Group Attack**.\n"
       "*(Everyone else will automatically be placed in **Group Defense** when you click Confirm)*.")
     await interaction.followup.send(prompt, view=view, ephemeral=True)
@@ -505,12 +500,14 @@ async def roster_attendance(
                          reverse=True)
     max_name_len = max((len(p) for p, _ in player_list), default=0)
     pad_len = min(max_name_len, 20)
+    icon = str(discord.PartialEmoji(name="hybrid", id=ROLE_EMOJI_IDS["multi"]))
     desc = ""
     for player, counts in player_list:
         perc = (counts["Accepted"] / total_events) * 100
         p_name = player[:pad_len].ljust(pad_len)
         member = interaction.guild.get_member_named(player) if interaction.guild else None
-        emoji_str = get_role_emoji(interaction.client, member)
+        emoji_obj = get_role_emoji(member)
+        emoji_str = str(emoji_obj) if emoji_obj else icon
         line = (f"{emoji_str} `{p_name}` A: `{counts['Accepted']:<2}` M: `{counts['Maybe']:<2}` "
                 f"D: `{counts['Declined']:<2}` %: `{perc:>5.1f}%`\n")
         desc += line
