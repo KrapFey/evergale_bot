@@ -461,7 +461,7 @@ async def roster_attendance(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> None:
-    """Generate attendance leaderboard dynamically padded."""
+    """Generate attendance leaderboard dynamically padded with emojis."""
     await interaction.response.defer()
     try:
         start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp()) \
@@ -501,11 +501,15 @@ async def roster_attendance(
                          reverse=True)
     max_name_len = max((len(p) for p, _ in player_list), default=0)
     pad_len = min(max_name_len, 20)
+    icon = str(discord.PartialEmoji(name="hybrid", id=ROLE_EMOJI_IDS["multi"]))
     desc = ""
     for player, counts in player_list:
         perc = (counts["Accepted"] / total_events) * 100
         p_name = player[:pad_len].ljust(pad_len)
-        line = (f"`{p_name}` A: `{counts['Accepted']:<2}` M: `{counts['Maybe']:<2}` "
+        member = interaction.guild.get_member_named(player) if interaction.guild else None
+        emoji_obj = get_role_emoji(member)
+        emoji_str = str(emoji_obj) if emoji_obj else icon
+        line = (f"{emoji_str} `{p_name}` A: `{counts['Accepted']:<2}` M: `{counts['Maybe']:<2}` "
                 f"D: `{counts['Declined']:<2}` %: `{perc:>5.1f}%`\n")
         desc += line
     embed.description = desc if len(desc) < 4096 else desc[:4090] + "..."
