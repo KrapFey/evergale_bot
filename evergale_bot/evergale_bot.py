@@ -51,7 +51,6 @@ class Config:
             "<hero_realm>",
             "<group_pvp>",
             "<united_resolve>",
-            "<speedrun>",
         ]
 
 def get_role_emoji(client: discord.Client, member: discord.Member | None) -> str:
