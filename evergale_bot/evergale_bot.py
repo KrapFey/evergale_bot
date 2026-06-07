@@ -8,6 +8,7 @@ import re
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import Literal
 
 import discord
 from discord.ext import commands
@@ -460,11 +461,13 @@ async def util_clean(interaction: discord.Interaction, filter_value: str = "all"
 @discord.app_commands.default_permissions(administrator=True)
 @discord.app_commands.describe(source="The channel to search for the Raid-Helper messages",
                                destination="The channel to move the messages to",
-                               tag="Optional tag to look for inside the embed (e.g. #sun_gw)",
+                               tag="The specific event tag to archive",
                                archive_limit="Max matched messages to archive (default 50)",
                                scan_limit="How many messages back to search overall (default 200)")
 async def util_archive(interaction: discord.Interaction, source: discord.TextChannel,
-                       destination: discord.TextChannel, tag: str | None = None,
+                       destination: discord.TextChannel,
+                       tag: Literal["<gvg_sat>", "<gvg_sun>", "<gvg_all>", "<hero_realm>",
+                                    "<group_pvp>", "<united_resolve>"],
                        archive_limit: int = 50, scan_limit: int = 200) -> None:
     """Archive raid logic."""
     log(f"[ARCHIVE] Initiated by @{interaction.user.display_name} | From: #{source.name} "
@@ -481,14 +484,13 @@ async def util_archive(interaction: discord.Interaction, source: discord.TextCha
         log(f"[ARCHIVE] Scanning {scan_limit} messages in #{source.name}...")
         async for msg in source.history(limit=scan_limit):
             if msg.author.id == Config.RAID_HELPER_ID:
-                if tag:
-                    tag_found = False
-                    for embed in msg.embeds:
-                        if tag.lower() in str(embed.to_dict()).lower():
-                            tag_found = True
-                            break
-                    if not tag_found:
-                        continue
+                tag_found = False
+                for embed in msg.embeds:
+                    if tag.lower() in str(embed.to_dict()).lower():
+                        tag_found = True
+                        break
+                if not tag_found:
+                    continue
                 target_messages.append(msg)
                 if len(target_messages) >= archive_limit:
                     break
@@ -499,9 +501,9 @@ async def util_archive(interaction: discord.Interaction, source: discord.TextCha
         return
     if not target_messages:
         log("[ARCHIVE] Success/Empty: No matching Raid-Helper messages found.")
-        msg_suffix = f" containing the tag `{tag}`" if tag else ""
-        await interaction.followup.send(f"Could not find any Raid-Helper messages{msg_suffix} in "
-                                        f"the last {scan_limit} messages of {source.mention}.",
+        await interaction.followup.send("Could not find any Raid-Helper messages containing the "
+                                        f"tag `{tag}` in the last {scan_limit} messages "
+                                        f"of {source.mention}.",
                                         ephemeral=True)
         return
     target_messages.reverse()
