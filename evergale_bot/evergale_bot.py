@@ -440,15 +440,16 @@ async def roster_attendance(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> None:
-    """Generate attendance leaderboard in custom format."""
+    """Generate attendance leaderboard in custom tabular format."""
     await interaction.response.defer()
-    start_ts = 0
-    if start_date:
-        start_ts= int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp())
-    end_ts = 9_999_999_999
-    if end_date:
-        end_ts = int(datetime.datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23,
-                                                                              minute=59).timestamp())
+    try:
+        start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp()) \
+            if start_date else 0
+        end_ts = int(datetime.datetime.strptime(end_date, "%Y-%m-%d").replace(
+            hour=23, minute=59).timestamp()) if end_date else 9_999_999_999
+    except ValueError:
+        await interaction.followup.send("❌ Use `YYYY-MM-DD` format.", ephemeral=True)
+        return
     clean_tag = tag.replace("<", "").replace(">", "")
     report_file = Path(f"reports/{clean_tag}.json")
     if not report_file.exists():
@@ -467,17 +468,19 @@ async def roster_attendance(
     if total_events == 0:
         await interaction.followup.send("No events in this range.", ephemeral=True)
         return
-    embed = discord.Embed(title=f"📊 Attendance: {clean_tag}", color=discord.Color.blue())
-    embed.add_field(name=f"Total Events: `{total_events}`",
+    embed = discord.Embed(title=f"## {clean_tag}", color=discord.Color.blue())
+    embed.add_field(name=f"### Total Events: `{total_events}`",
                     value="`A` - Accepted | `M` - Maybe | `D` - Declined | `%` - Attendance",
                     inline=False)
-    player_list = sorted(stats.items(), key=lambda x: (x[1]["Accepted"]/total_events), reverse=True)
-    desc = ""
+    player_list = sorted(stats.items(), key=lambda x: (x[1]["Accepted"] / total_events),
+                         reverse=True)
+    desc = "```\n"
     for player, counts in player_list:
         perc = (counts["Accepted"] / total_events) * 100
-        desc += (f"{player.ljust(15)} A: `{counts['Accepted']}` "
-                 f"M: `{counts['Maybe']}` D: `{counts['Declined']}` "
-                 f"%: `{perc:.1f}%`\n")
+        desc += (f"{player[:12].ljust(12)} A: `{counts['Accepted']:<2}` "
+                 f"M: `{counts['Maybe']:<2}` D: `{counts['Declined']:<2}` "
+                 f"%: `{perc:>5.1f}%`\n")
+    desc += "```"
     embed.description = desc if len(desc) < 4096 else desc[:4090] + "..."
     await interaction.followup.send(embed=embed)
 
