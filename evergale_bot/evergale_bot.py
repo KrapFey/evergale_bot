@@ -476,19 +476,15 @@ async def roster_attendance(
     desc = ""
     for player, counts in player_list:
         perc = (counts["Accepted"] / total_events) * 100
-        truncated_name = player[:pad_len]
-        pad_spaces = "\u2800" * (pad_len - len(truncated_name) + 1)
-        p_name = truncated_name + pad_spaces
-        line = (f"{p_name} A: `{counts['Accepted']}` M: `{counts['Maybe']}` "
-                f"D: `{counts['Declined']}` %: `{perc:.1f}%`\n")
+        p_name = player[:pad_len].ljust(pad_len)
+        line = (f"`{p_name}` A: `{counts['Accepted']:<2}` M: `{counts['Maybe']:<2}` "
+                f"D: `{counts['Declined']:<2}` %: `{perc:>5.1f}%`\n")
         desc += line
     embed.description = desc if len(desc) < 4096 else desc[:4090] + "..."
     embed.add_field(name="Total Events:", value=f"`{total_events}`", inline=False)
-    embed.add_field(
-        name="Legend:",
-        value="`A` - Accepted | `M` - Maybe | `D` - Declined | `%` - Attendance",
-        inline=False,
-    )
+    embed.add_field(name="Legend:",
+                    value="`A` - Accepted | `M` - Maybe | `D` - Declined | `%` - Attendance",
+                    inline=False)
     await interaction.followup.send(embed=embed)
 
 @utility.command(name="clean", description="Clean channel")
