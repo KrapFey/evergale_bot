@@ -518,46 +518,49 @@ async def roster_attendance(
 
 @utility.command(name="clean", description="Clean channel")
 @discord.app_commands.default_permissions(administrator=True)
-@discord.app_commands.describe(filter_value="Which messages to remove: all | bots | user",
-                               limit="How many messages to scan (max 1000)",
-                               user="When filter_val=user, target this member")
-async def util_clean(interaction: discord.Interaction, filter_value: str = "all",
-                     limit: int = 100, user: discord.Member | None = None) -> None:
+@discord.app_commands.describe(
+    target="Which messages to remove: all | bots | users",
+    limit="How many messages to scan (max 1000)",
+    user="When target=users, target this member",
+)
+@discord.app_commands.choices(target=[
+    discord.app_commands.Choice(name="all", value="all"),
+    discord.app_commands.Choice(name="bots", value="bots"),
+    discord.app_commands.Choice(name="users", value="users"),
+])
+async def util_clean(interaction: discord.Interaction, target: str = "all", limit: int = 100,
+                     user: discord.Member | None = None) -> None:
     """Clean channel logic."""
+    def check(msg: discord.Message) -> bool:
+        """Determine if a scanned message meets the deletion criteria."""
+        if target == "all":
+            return True
+        if target == "bots":
+            return msg.author.bot
+        if target == "users":
+            if user:
+                return msg.author.id == user.id
+            # If target is 'users' but no specific user is selected, delete all non-bot messages
+            return not msg.author.bot
+        return False
+
     channel = getattr(interaction, "channel", None)
     channel_name = getattr(channel, "name", "unknown-channel")
     log(f"[CLEAN] Initiated by @{interaction.user.display_name} in #{channel_name} "
-        f"(Filter: {filter_value}, Limit: {limit}, "
-        f"User: {getattr(user, 'display_name', 'None')})")
+        f"(Target: {target}, Limit: {limit}, User: {getattr(user, 'display_name', 'None')})")
     if not interaction.user.guild_permissions.manage_messages:
         log(f"[CLEAN] Failed: @{interaction.user.display_name} lacks Manage Messages.")
-        await interaction.response.send_message("You need Manage Messages permission to use this.",
+        await interaction.response.send_message("You need Manage Messages permission.",
                                                 ephemeral=True)
         return
     bot_member = interaction.guild.me
     if not bot_member or not bot_member.guild_permissions.manage_messages:
         log("[CLEAN] Failed: Bot lacks Manage Messages permission.")
-        await interaction.response.send_message("I need Manage Messages permission to delete "
-                                                "messages.", ephemeral=True)
-        return
-    filter_value = filter_value.lower()
-    if filter_value not in ("all", "bots", "user"):
-        await interaction.response.send_message("Invalid filter. Use `all`, `bots`, or `user`.",
+        await interaction.response.send_message("I need Manage Messages permission.",
                                                 ephemeral=True)
         return
     limit = max(1, min(limit, Config.MAX_PURGE_SCAN))
     await interaction.response.defer(ephemeral=True)
-    def check(msg: discord.Message) -> bool:
-        """Determine if a scanned message meets the deletion criteria."""
-        if msg.id == interaction.id:
-            return False
-        if filter_value == "all":
-            return True
-        if filter_value == "bots":
-            return msg.author.bot
-        if filter_value == "user":
-            return user is not None and msg.author.id == user.id
-        return False
     deleted_count = 0
     try:
         log(f"[CLEAN] Purging up to {limit} recent messages...")
@@ -565,35 +568,35 @@ async def util_clean(interaction: discord.Interaction, filter_value: str = "all"
         deleted_count += len(deleted)
     except discord.Forbidden:
         log("[CLEAN] Failed: Bot forbidden from deleting in this channel.")
-        await interaction.followup.send("I don't have permission to delete messages in this "
-                                        "channel.", ephemeral=True)
+        await interaction.followup.send("I don't have permission to delete here.", ephemeral=True)
         return
     except discord.HTTPException:
         log("[CLEAN] Bulk purge failed, falling back to manual history scan.")
-    remaining: list[discord.Message] = []
-    cutoff = discord.utils.utcnow() - datetime.timedelta(days=14)
-    tasks = []
-    try:
-        async for msg in channel.history(limit=limit):
-            if not check(msg):
-                continue
-            if msg.created_at <= cutoff:
-                remaining.append(msg)
-            else:
-                tasks.append(msg.delete())
-    except Exception as e:
-        log(f"[CLEAN] Failed history scan: {e}")
-        await interaction.followup.send("Failed to scan channel history. Check bot permissions.",
-                                        ephemeral=True)
-        return
-    tasks.extend([old_msg.delete() for old_msg in remaining])
-    if tasks:
-        log(f"[CLEAN] Concurrently deleting {len(tasks)} manual messages...")
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        deleted_count += sum(1 for r in results if not isinstance(r, Exception))
+        remaining: list[discord.Message] = []
+        cutoff = discord.utils.utcnow() - datetime.timedelta(days=14)
+        tasks = []
+        try:
+            async for msg in channel.history(limit=limit):
+                if not check(msg):
+                    continue
+                if msg.created_at <= cutoff:
+                    remaining.append(msg)
+                else:
+                    tasks.append(msg.delete())
+        except Exception as e:
+            log(f"[CLEAN] Failed history scan: {e}")
+            await interaction.followup.send("Failed to scan channel history.", ephemeral=True)
+            return
+        tasks.extend([old_msg.delete() for old_msg in remaining])
+        if tasks:
+            log(f"[CLEAN] Concurrently deleting {len(tasks)} manual messages...")
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            deleted_count += sum(1 for r in results if not isinstance(r, Exception))
     log(f"[CLEAN] Success: Removed {deleted_count} messages.")
-    await interaction.followup.send(f"Clean complete — removed **{deleted_count}** msgs "
-                                    f"(filter: **{filter_value}**).", ephemeral=True)
+    await interaction.followup.send(
+        f"✅ Clean complete — removed **{deleted_count}** msgs (target: **{target}**).",
+        ephemeral=True,
+    )
 
 
 @utility.command(name="archive", description="Archive raids and save attendance information")
