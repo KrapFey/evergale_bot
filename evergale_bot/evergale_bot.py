@@ -597,72 +597,81 @@ async def util_clean(interaction: discord.Interaction, filter_value: str = "all"
 
 @utility.command(name="archive", description="Archive raids and save attendance information")
 @discord.app_commands.default_permissions(administrator=True)
-@discord.app_commands.describe(source="The channel to search for the Raid-Helper messages",
-                               destination="The channel to move the messages to",
-                               tag="The specific event tag to archive",
-                               archive_limit="Max matched messages to archive (default 50)",
-                               scan_limit="How many messages back to search overall (default 200)")
+@discord.app_commands.describe(
+    source="The channel to search for the Raid-Helper messages",
+    destination="The channel to move the messages to",
+    tag="Optional: Specific event tag to archive. Leave blank for ALL.",
+    start_date="Optional: Archive events after this date (YYYY-MM-DD)",
+    end_date="Optional: Archive events before this date (YYYY-MM-DD)",
+    archive_limit="Max matched messages to archive (default 50)",
+    scan_limit="How many messages back to search overall (default 200)",
+)
 @discord.app_commands.choices(tag=[
     discord.app_commands.Choice(name=t, value=t) for t in Config.EVENT_TAGS
 ])
 async def util_archive(interaction: discord.Interaction, source: discord.TextChannel,
-                       destination: discord.TextChannel,
-                       tag: str,
+                       destination: discord.TextChannel, tag: str | None = None,
+                       start_date: str | None = None, end_date: str | None = None,
                        archive_limit: int = 50, scan_limit: int = 200) -> None:
-    """Archive raid messages and extract roster JSON."""
-    log(f"[ARCHIVE] Initiated by @{interaction.user.display_name} | From: #{source.name} "
-        f"-> To: #{destination.name} | Tag: {tag}")
+    """Archive raid messages with optional tag and date filtering."""
     await interaction.response.defer(ephemeral=True)
-    if not interaction.user.guild_permissions.manage_messages:
-        await interaction.followup.send("You need Manage Messages permission.", ephemeral=True)
-        return
-    target_messages: list[discord.Message] = []
+    # Date Logic
     try:
-        async for msg in source.history(limit=scan_limit):
-            if msg.author.id == Config.RAID_HELPER_ID:
-                tag_found = any(tag.lower() in str(embed.to_dict()).lower() for embed in msg.embeds)
-                if tag_found:
-                    target_messages.append(msg)
+        start_ts = 0
+        end_ts = int(datetime.datetime.now().timestamp())
+        if start_date:
+            start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp())
+        if end_date:
+            end_ts = int(datetime.datetime.strptime(end_date,
+                                                    "%Y-%m-%d").replace(hour=23,
+                                                                        minute=59).timestamp())
+    except ValueError:
+        await interaction.followup.send("❌ Use `YYYY-MM-DD` format for dates.", ephemeral=True)
+        return
+    log(f"[ARCHIVE] Initiated by @{interaction.user.display_name} | Tag: {tag or 'ALL'}")
+    target_messages = []
+    async for msg in source.history(limit=scan_limit):
+        if msg.author.id == Config.RAID_HELPER_ID:
+            parsed = RaidParser.parse(msg)
+            # Filter by Tag
+            tag_match = (tag is None) or (tag.lower() in str(msg.embeds).lower())
+            # Filter by Date
+            date_match = (start_ts <= parsed["timestamp"] <= end_ts)
+            if tag_match and date_match:
+                target_messages.append((msg, parsed))
                 if len(target_messages) >= archive_limit:
                     break
-    except discord.Forbidden:
-        await interaction.followup.send(f"I lack permission to read {source.mention}.",
-                                        ephemeral=True)
-        return
     if not target_messages:
-        await interaction.followup.send(f"No messages found with `{tag}`.", ephemeral=True)
+        await interaction.followup.send("No matching messages found.", ephemeral=True)
         return
-    clean_tag = tag.replace("<", "").replace(">", "")
-    report_file = Path(f"reports/{clean_tag}.json")
-    report_file.parent.mkdir(parents=True, exist_ok=True)
-    report_data = {}
-    if report_file.exists():
-        with report_file.open("r", encoding="utf-8") as f:
-            try:
-                report_data = json.load(f)
-            except json.JSONDecodeError:
-                report_data = {}
-    target_messages.reverse()
+    # Process and Archive
     archived_count, failed_count = 0, 0
-    for msg in target_messages:
-        parsed = RaidParser.parse(msg)
-        timestamp_key = str(parsed["timestamp"])
-        report_data[timestamp_key] = parsed["groups"]
+    # We group data by tag to update individual JSON files correctly
+    for msg, parsed in reversed(target_messages):
+        # Determine which JSON file to update (default to 'misc' if tag is missing)
+        file_tag = tag.replace("<", "").replace(">", "") if tag else "archive_all"
+        report_file = Path(f"reports/{file_tag}.json")
+        report_file.parent.mkdir(parents=True, exist_ok=True)
+        report_data = {}
+        if report_file.exists():
+            with contextlib.suppress(json.JSONDecodeError):  # noqa: SIM117
+                with report_file.open("r", encoding="utf-8") as f:
+                    report_data = json.load(f)
+        report_data[str(parsed["timestamp"])] = parsed["groups"]
+        with report_file.open("w", encoding="utf-8") as f:
+            json.dump(report_data, f, indent=4)
         try:
             await msg.forward(destination)
             await msg.delete()
             archived_count += 1
             await asyncio.sleep(1)
-        except discord.HTTPException as e:
-            log(f"[ARCHIVE] Warning: Failed to move message ID {msg.id}: {e}")
+        except discord.HTTPException:
             failed_count += 1
-            continue
-    with report_file.open("w", encoding="utf-8") as f:
-        json.dump(report_data, f, indent=4)
-    fail_txt = f" ({failed_count} failed)" if failed_count > 0 else ""
-    await interaction.followup.send(f"**Archive Complete!**\n"
-                                    f"Moved **{archived_count}** Raid-Helper message "
-                                    f"to {destination.mention}. {fail_txt}", ephemeral=True)
+    await interaction.followup.send(
+        f"✅ Archived **{archived_count}** messages to {destination.mention}. "
+        f"{f'({failed_count} failed)' if failed_count > 0 else ''}",
+        ephemeral=True,
+    )
 
 
 # Add groups to tree
