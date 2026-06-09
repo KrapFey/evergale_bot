@@ -622,9 +622,8 @@ async def util_archive(interaction: discord.Interaction, source: discord.TextCha
         if start_date:
             start_ts = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp())
         if end_date:
-            end_ts = int(datetime.datetime.strptime(end_date,
-                                                    "%Y-%m-%d").replace(hour=23,
-                                                                        minute=59).timestamp())
+            end_ts = int(datetime.datetime.strptime(end_date, "%Y-%m-%d").replace(
+                hour=23, minute=59).timestamp())
     except ValueError:
         await interaction.followup.send("❌ Use `YYYY-MM-DD` format for dates.", ephemeral=True)
         return
@@ -633,33 +632,45 @@ async def util_archive(interaction: discord.Interaction, source: discord.TextCha
     async for msg in source.history(limit=scan_limit):
         if msg.author.id == Config.RAID_HELPER_ID:
             parsed = RaidParser.parse(msg)
-            # Filter by Tag
-            tag_match = (tag is None) or (tag.lower() in str(msg.embeds).lower())
             # Filter by Date
-            date_match = (start_ts <= parsed["timestamp"] <= end_ts)
-            if tag_match and date_match:
-                target_messages.append((msg, parsed))
-                if len(target_messages) >= archive_limit:
-                    break
+            if not (start_ts <= parsed["timestamp"] <= end_ts):
+                continue
+            msg_tag = None
+            if tag:
+                # Check if the specific tag exists in any embed
+                if any(tag.lower() in str(e.to_dict()).lower() for e in msg.embeds):
+                    msg_tag = tag
+                else:
+                    continue  # Skip message entirely if it doesn't match explicit tag
+            else:
+                # Check against all known EVENT_TAGS if no specific tag was requested
+                for t in Config.EVENT_TAGS:
+                    if any(t.lower() in str(e.to_dict()).lower() for e in msg.embeds):
+                        msg_tag = t
+                        break
+            # Append msg_tag to the tuple so we know where to save the JSON later
+            target_messages.append((msg, parsed, msg_tag))
+            if len(target_messages) >= archive_limit:
+                break
     if not target_messages:
         await interaction.followup.send("No matching messages found.", ephemeral=True)
         return
     # Process and Archive
     archived_count, failed_count = 0, 0
-    # We group data by tag to update individual JSON files correctly
-    for msg, parsed in reversed(target_messages):
-        # Determine which JSON file to update (default to 'misc' if tag is missing)
-        file_tag = tag.replace("<", "").replace(">", "") if tag else "archive_all"
-        report_file = Path(f"reports/{file_tag}.json")
-        report_file.parent.mkdir(parents=True, exist_ok=True)
-        report_data = {}
-        if report_file.exists():
-            with contextlib.suppress(json.JSONDecodeError):  # noqa: SIM117
-                with report_file.open("r", encoding="utf-8") as f:
-                    report_data = json.load(f)
-        report_data[str(parsed["timestamp"])] = parsed["groups"]
-        with report_file.open("w", encoding="utf-8") as f:
-            json.dump(report_data, f, indent=4)
+    for msg, parsed, msg_tag in reversed(target_messages):
+        # Only save attendance data if a valid tag was identified
+        if msg_tag:
+            file_tag = msg_tag.replace("<", "").replace(">", "")
+            report_file = Path(f"reports/{file_tag}.json")
+            report_file.parent.mkdir(parents=True, exist_ok=True)
+            report_data = {}
+            if report_file.exists():
+                with contextlib.suppress(json.JSONDecodeError):  # noqa: SIM117
+                    with report_file.open("r", encoding="utf-8") as f:
+                        report_data = json.load(f)
+            report_data[str(parsed["timestamp"])] = parsed["groups"]
+            with report_file.open("w", encoding="utf-8") as f:
+                json.dump(report_data, f, indent=4)
         try:
             await msg.forward(destination)
             await msg.delete()
