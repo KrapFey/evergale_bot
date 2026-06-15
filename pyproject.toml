@@ -29,31 +29,35 @@ classifiers = [
 
 dependencies = [
     "discord-py>=2.7.1",
-    "python-dotenv>=1.2.2"
+    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "ruff>=0.15.2",
     "pre-commit>=4.5.1",
+    "pytest>=9.0",
 ]
 all = [
     "evergale_bot[dev]"
 ]
 
 [project.scripts]
-evergale_bot = "evergale_bot:main"
+evergale_bot = "evergale_bot.evergale_bot:main"
 
 [project.urls]
 Repository = "https://github.com/KrapFey/evergale_bot"
 
-[tool.setuptools]
-package-dir = { "" = "evergale_bot" }
-
 [tool.setuptools.packages.find]
-where = ["evergale_bot"]
-include = ["*"]
+where = ["."]
+include = ["evergale_bot*"]
 namespaces = false
+
+[tool.setuptools.package-data]
+"evergale_bot" = ["src/input/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
@@ -92,9 +96,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"tests/*.py" = ["D"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["utils"]
+known-first-party = ["evergale_bot"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
 [tool.ruff.format]
