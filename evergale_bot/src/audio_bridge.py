@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, voice_recv
 
 from evergale_bot.src.logger import log
 
@@ -13,7 +13,7 @@ _QUEUE_MAX_FRAMES: int = 15
 _PCM_FRAME_BYTES: int = 3840  # 20ms at 48kHz stereo 16-bit
 
 
-class UserSink(discord.AudioSink):
+class UserSink(voice_recv.AudioSink):
     """Captures PCM audio from a single target user and feeds it into the bridge queue.
 
     Frames from all other users are silently discarded. When the queue is full
@@ -30,7 +30,7 @@ class UserSink(discord.AudioSink):
         self.__target_user_id: int = target_user_id
         self.__queue: thread_queue.Queue[bytes] = audio_queue
 
-    def write(self, data: discord.VoiceData, user: discord.User) -> None:
+    def write(self, data: voice_recv.VoiceData, user: discord.User) -> None:
         """Write a received audio frame, filtering to the target user.
 
         Args:
