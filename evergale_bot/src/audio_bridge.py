@@ -138,8 +138,8 @@ class AudioBridge:
                 )
             self._vc_speaker = await speaker_ch.connect()
             self._vc_speaker.play(BridgeAudioSource(self.queue))
-        except Exception:
-            await self.teardown("connection failed during start")
+        except Exception as exc:
+            await self.teardown(f"connection failed during start: {exc}")
             raise
 
         self.active = True
