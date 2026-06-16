@@ -50,6 +50,9 @@ BOT.tree.add_command(Utility())
 async def on_ready() -> None:
     """Sync slash commands to the configured guild on startup."""
     _log_online(BOT, "BOT")
+    if Config.GUILD_ID == 0:
+        log("[BOT] WARNING: GUILD_ID is not set — commands will not sync")
+        return
     guild = discord.Object(id=Config.GUILD_ID)
     BOT.tree.copy_global_to(guild=guild)
     synced = await BOT.tree.sync(guild=guild)
@@ -75,6 +78,11 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     if before.channel == _BRIDGE.listen_channel and after.channel != _BRIDGE.listen_channel:
         log(f"[RELAY] Auto-stop: @{member.display_name} left #{before.channel.name}")
         await _BRIDGE.teardown("invoker left the channel")
+
+
+async def _on_speaker_ready() -> None:
+    """Log when the speaker bot connects."""
+    _log_online(_BOT_SPEAKER, "SPEAKER")
 
 
 async def _run(master_token: str, speaker_token: str | None) -> None:
@@ -107,13 +115,9 @@ def main() -> int:
     speaker_token = os.getenv("SPEAKER_TOKEN")
     if speaker_token:
         _BOT_SPEAKER = commands.Bot(command_prefix="!", intents=_INTENTS)
+        _BOT_SPEAKER.add_listener(_on_speaker_ready, "on_ready")
         _BRIDGE = AudioBridge(bot_speaker=_BOT_SPEAKER)
         BOT.tree.add_command(Relay(bridge=_BRIDGE))
-
-        @_BOT_SPEAKER.event
-        async def on_speaker_ready() -> None:
-            _log_online(_BOT_SPEAKER, "SPEAKER")
-
         log("[BOT] Speaker token found — relay commands enabled")
     else:
         log("[BOT] No SPEAKER_TOKEN — relay commands disabled, all other commands available")

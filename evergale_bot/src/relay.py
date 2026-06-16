@@ -41,14 +41,28 @@ class Relay(app_commands.Group, name="relay", description="Voice relay managemen
             return
 
         listen_ch = interaction.user.voice.channel
+
+        if speak.id == listen_ch.id:
+            await interaction.followup.send(
+                "The speak channel cannot be the same as your current channel.",
+                ephemeral=True,
+            )
+            return
+
         log(f"[RELAY] Listen requested by @{interaction.user.display_name} "
             f"-> #{listen_ch.name} | speak: #{speak.name}")
 
-        await self.__bridge.start(
-            invoker=interaction.user,
-            listen_ch=listen_ch,
-            speak_ch=speak,
-        )
+        try:
+            await self.__bridge.start(
+                invoker=interaction.user,
+                listen_ch=listen_ch,
+                speak_ch=speak,
+            )
+        except Exception as exc:
+            log(f"[RELAY] Start failed: {exc}")
+            await interaction.followup.send(
+                f"Failed to start relay: {exc}", ephemeral=True)
+            return
 
         await interaction.followup.send(
             f"Relay active — listening in **#{listen_ch.name}**, "

@@ -118,15 +118,24 @@ class AudioBridge:
         self.invoker_id = invoker.id
         self.listen_channel = listen_ch
         self.speak_channel = speak_ch
+
+        try:
+            self._vc_master = await listen_ch.connect()
+            self._vc_master.listen(UserSink(invoker.id, self.queue))
+
+            speaker_ch = self.bot_speaker.get_channel(speak_ch.id)
+            if speaker_ch is None:
+                raise RuntimeError(
+                    f"Speaker bot cannot see channel #{speak_ch.name} — "
+                    "ensure it is invited to the guild and has cached the channel.",
+                )
+            self._vc_speaker = await speaker_ch.connect()
+            self._vc_speaker.play(BridgeAudioSource(self.queue))
+        except Exception:
+            await self.teardown("connection failed during start")
+            raise
+
         self.active = True
-
-        self._vc_master = await listen_ch.connect()
-        self._vc_master.listen(UserSink(invoker.id, self.queue))
-
-        speaker_ch = self.bot_speaker.get_channel(speak_ch.id)
-        self._vc_speaker = await speaker_ch.connect()
-        self._vc_speaker.play(BridgeAudioSource(self.queue))
-
         log(f"[RELAY] Started: @{invoker.display_name} "
             f"#{listen_ch.name} -> #{speak_ch.name}")
 
@@ -136,7 +145,7 @@ class AudioBridge:
         Args:
             reason: Short description logged alongside the stop event.
         """
-        if not self.active:
+        if not self.active and self._vc_master is None and self._vc_speaker is None:
             return
         self.active = False
 

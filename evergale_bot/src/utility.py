@@ -25,6 +25,13 @@ def _save_report(msg_tag: str, parsed: _ParsedData) -> None:
         msg_tag: Clean event tag (e.g. ``gvg_sat``).
         parsed: Parsed message data containing ``timestamp`` and ``groups``.
     """
+    if msg_tag not in Config.CLEAN_EVENT_TAGS:
+        log(f"[ARCHIVE] Skipping report save: unknown tag '{msg_tag}'")
+        return
+    timestamp = parsed["timestamp"]
+    if not isinstance(timestamp, int) or timestamp == 0:
+        log(f"[ARCHIVE] Skipping report save for '{msg_tag}': no valid timestamp")
+        return
     report_file = Path(f"reports/{msg_tag}.json")
     report_file.parent.mkdir(parents=True, exist_ok=True)
     report_data: dict[str, object] = {}
@@ -35,7 +42,7 @@ def _save_report(msg_tag: str, parsed: _ParsedData) -> None:
                 report_data = json.load(f)
         except OSError:
             pass
-    report_data[str(parsed["timestamp"])] = parsed["groups"]
+    report_data[str(timestamp)] = parsed["groups"]
     with report_file.open("w", encoding="utf-8") as f:
         json.dump(report_data, f, indent=4)
 
@@ -66,6 +73,24 @@ async def _forward_messages(messages: list[tuple[discord.Message, _ParsedData, s
     return archived, failed
 
 
+def _embed_contains(embed: discord.Embed, tag: str) -> bool:
+    """Check whether an embed's text fields contain the given tag.
+
+    Checks only title, description, and field values — avoids converting
+    the full embed to a dict and string.
+
+    Args:
+        embed: The Discord embed to inspect.
+        tag: Lowercase tag string to search for.
+
+    Returns:
+        True if the tag appears in any of the embed's text fields.
+    """
+    candidates = [embed.title, embed.description]
+    candidates.extend(f.value for f in embed.fields)
+    return any(tag in (text or "").lower() for text in candidates)
+
+
 def _match_tag(msg: discord.Message, tag: str | None) -> str | None:
     """Find which event tag this message belongs to.
 
@@ -77,9 +102,9 @@ def _match_tag(msg: discord.Message, tag: str | None) -> str | None:
         The matched tag string, or None if no match found.
     """
     if tag:
-        return tag if any(tag.lower() in str(e.to_dict()).lower() for e in msg.embeds) else None
+        return tag if any(_embed_contains(e, tag.lower()) for e in msg.embeds) else None
     for t in Config.EVENT_TAGS:
-        if any(t.lower() in str(e.to_dict()).lower() for e in msg.embeds):
+        if any(_embed_contains(e, t.lower()) for e in msg.embeds):
             return t
     return None
 

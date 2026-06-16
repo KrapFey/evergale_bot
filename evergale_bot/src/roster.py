@@ -256,6 +256,8 @@ def _load_report_data(tag: str) -> dict[str, dict[str, list[str]]]:
         Merged dict of timestamp -> groups data.
     """
     clean_tag = tag.replace("<", "").replace(">", "")
+    if clean_tag not in Config.CLEAN_EVENT_TAGS | {"gvg_all"}:
+        return {}
     files = ([Path("reports/gvg_sat.json"), Path("reports/gvg_sun.json")]
              if clean_tag == "gvg_all" else [Path(f"reports/{clean_tag}.json")])
     data: dict[str, dict[str, list[str]]] = {}
@@ -283,7 +285,11 @@ def _compute_stats(report_data: dict[str, dict[str, list[str]]],
         lambda: {"Accepted": 0, "Maybe": 0, "Declined": 0})
     total = 0
     for ts_str, groups in report_data.items():
-        if start_ts <= int(ts_str) <= end_ts:
+        try:
+            ts = int(ts_str)
+        except ValueError:
+            continue
+        if start_ts <= ts <= end_ts:
             total += 1
             for grp in ("Accepted", "Maybe", "Declined"):
                 for player in groups.get(grp, []):

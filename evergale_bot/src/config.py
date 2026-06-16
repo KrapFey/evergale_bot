@@ -37,6 +37,9 @@ class Config:
         "<united_resolve>",
         "<speedrun>",
     ]
+    CLEAN_EVENT_TAGS: ClassVar[frozenset[str]] = frozenset(
+        t.replace("<", "").replace(">", "") for t in EVENT_TAGS
+    )
 
 
 def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None:
