@@ -1,6 +1,6 @@
 # Evergale BOT
 
-A Discord guild management bot for gaming guilds. Integrates with the **Raid-Helper** bot to automate roster classification and attendance tracking.
+A Discord guild management bot for gaming guilds. Integrates with the **Raid-Helper** bot to automate roster classification and attendance tracking. Includes an optional two-bot voice relay system.
 
 ---
 
@@ -51,12 +51,33 @@ Works with Raid-Helper signup messages.
 
 ---
 
+### `/relay` — Voice relay *(requires speaker bot)*
+
+Bridges two voice channels: the master bot listens to one person in channel A and the speaker bot plays their audio in channel B in real time.
+
+| Command | Access | Description |
+|---|---|---|
+| `/relay listen <speak>` | Admin | Join your current voice channel and relay your audio to `<speak>` |
+| `/relay stop_listening` | Admin (invoker only) | Disconnect both bots and stop the relay |
+
+**`/relay listen` flow:**
+1. Join a voice channel.
+2. Run `/relay listen speak:#channel-b`.
+3. The master bot joins your channel and starts listening to you only.
+4. The speaker bot joins `#channel-b` and plays your audio there.
+5. The relay stops automatically if you leave your channel, or manually via `/relay stop_listening`.
+
+> **Note:** `/relay` commands only appear if `SPEAKER_TOKEN` is configured in `.env`. The master bot runs normally without it.
+
+---
+
 ## Setup
 
 ### Requirements
 
 - Python 3.11+
-- A Discord bot token with the following intents enabled: **Guilds**, **Members**, **Messages**, **Message Content**
+- Discord bot intents enabled: **Guilds**, **Members**, **Messages**, **Message Content**, **Voice States**
+- For the voice relay: two separate Discord applications (master bot + speaker bot), both invited to the guild with **Connect**, **Speak**, and **Use Voice Activity** permissions
 
 ### Installation
 
@@ -74,7 +95,10 @@ Copy `.env.example` to `.env` and fill in the values:
 
 ```
 GUILD_ID=your_guild_id_here
-MAGIC=your_bot_token_here
+MAGIC=your_master_bot_token_here
+
+# Optional — enables /relay commands
+SPEAKER_TOKEN=your_speaker_bot_token_here
 ```
 
 ### Running

@@ -28,7 +28,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "discord-py>=2.7.1",
+    "discord-py[voice]>=2.7.1",
     "python-dotenv>=1.2.2",
 ]
 
