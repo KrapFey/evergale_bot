@@ -48,6 +48,13 @@ class UserSink(voice_recv.AudioSink):
     def cleanup(self) -> None:
         """Called by discord.py when the sink is detached."""
 
+    def wants_opus(self):
+        """Dictates if the sink wants encoded Opus data or decoded PCM data.
+
+        Return False if you want uncompressed PCM data (recommended for relays).
+        Return True if you want compressed Opus packets.
+        """
+        return False
 
 class BridgeAudioSource(discord.AudioSource):
     """Reads PCM frames from the bridge queue for playback.
@@ -120,7 +127,7 @@ class AudioBridge:
         self.speak_channel = speak_ch
 
         try:
-            self._vc_master = await listen_ch.connect()
+            self._vc_master = await listen_ch.connect(cls=voice_recv.VoiceRecvClient)
             self._vc_master.listen(UserSink(invoker.id, self.queue))
 
             speaker_ch = self.bot_speaker.get_channel(speak_ch.id)
