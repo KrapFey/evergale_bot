@@ -1,5 +1,6 @@
 """Audio bridge connecting the master bot (listener) to the speaker bot (speaker)."""
 
+import contextlib
 import queue as thread_queue
 from dataclasses import dataclass, field
 from typing import ClassVar
@@ -27,34 +28,39 @@ class UserSink(voice_recv.AudioSink):
             target_user_id: Discord user ID whose audio will be captured.
             audio_queue: Shared thread-safe queue to push PCM frames into.
         """
+        super().__init__()
         self.__target_user_id: int = target_user_id
         self.__queue: thread_queue.Queue[bytes] = audio_queue
 
-    def write(self, data: voice_recv.VoiceData, user: discord.User) -> None:
+    def write(self, user: discord.Member | discord.User | None,
+              data: voice_recv.VoiceData) -> None:
         """Write a received audio frame, filtering to the target user.
 
         Args:
+            user: The Discord user who produced the audio, or None if unknown.
             data: Voice frame containing decoded PCM data.
-            user: The Discord user who produced the audio.
         """
-        if user.id != self.__target_user_id:
+        if user is None or user.id != self.__target_user_id:
             return
         try:
             self.__queue.put_nowait(data.pcm)
         except thread_queue.Full:
-            self.__queue.get_nowait()
-            self.__queue.put_nowait(data.pcm)
+            with contextlib.suppress(thread_queue.Empty):
+                self.__queue.get_nowait()
+            with contextlib.suppress(thread_queue.Full):
+                self.__queue.put_nowait(data.pcm)
 
     def cleanup(self) -> None:
         """Called by discord.py when the sink is detached."""
 
-    def wants_opus(self):
+    def wants_opus(self) -> bool:
         """Dictates if the sink wants encoded Opus data or decoded PCM data.
 
         Return False if you want uncompressed PCM data (recommended for relays).
         Return True if you want compressed Opus packets.
         """
         return False
+
 
 class BridgeAudioSource(discord.AudioSource):
     """Reads PCM frames from the bridge queue for playback.
@@ -110,15 +116,18 @@ class AudioBridge:
     listen_channel: discord.VoiceChannel | None = None
     speak_channel: discord.VoiceChannel | None = None
     active: bool = False
-    _vc_master: discord.VoiceClient | None = field(default=None, repr=False)
-    _vc_speaker: discord.VoiceClient | None = field(default=None, repr=False)
 
-    async def start(self, invoker: discord.Member, listen_ch: discord.VoiceChannel,
+    def __post_init__(self) -> None:
+        """Initialise private voice client handles."""
+        self.__vc_master: voice_recv.VoiceRecvClient | None = None
+        self.__vc_speaker: discord.VoiceClient | None = None
+
+    async def start(self, invoker: discord.User | discord.Member, listen_ch: discord.VoiceChannel,
                     speak_ch: discord.VoiceChannel) -> None:
         """Connect both bots and start the audio pipeline.
 
         Args:
-            invoker: The member who triggered the relay.
+            invoker: The user or member who triggered the relay.
             listen_ch: Voice channel Bot 1 (master) joins.
             speak_ch: Voice channel Bot 2 (speaker) joins.
         """
@@ -127,17 +136,17 @@ class AudioBridge:
         self.speak_channel = speak_ch
 
         try:
-            self._vc_master = await listen_ch.connect(cls=voice_recv.VoiceRecvClient)
-            self._vc_master.listen(UserSink(invoker.id, self.queue))
+            self.__vc_master = await listen_ch.connect(cls=voice_recv.VoiceRecvClient)
+            self.__vc_master.listen(UserSink(invoker.id, self.queue))
 
             speaker_ch = self.bot_speaker.get_channel(speak_ch.id)
-            if speaker_ch is None:
+            if not isinstance(speaker_ch, discord.VoiceChannel):
                 raise RuntimeError(
                     f"Speaker bot cannot see channel #{speak_ch.name} — "
                     "ensure it is invited to the guild and has cached the channel.",
                 )
-            self._vc_speaker = await speaker_ch.connect()
-            self._vc_speaker.play(BridgeAudioSource(self.queue))
+            self.__vc_speaker = await speaker_ch.connect()
+            self.__vc_speaker.play(BridgeAudioSource(self.queue))
         except Exception as exc:
             await self.teardown(f"connection failed during start: {exc}")
             raise
@@ -152,25 +161,25 @@ class AudioBridge:
         Args:
             reason: Short description logged alongside the stop event.
         """
-        if not self.active and self._vc_master is None and self._vc_speaker is None:
+        if not self.active and self.__vc_master is None and self.__vc_speaker is None:
             return
         self.active = False
 
-        if self._vc_master and self._vc_master.is_connected():
-            self._vc_master.stop_listening()
-            await self._vc_master.disconnect()
+        if self.__vc_master and self.__vc_master.is_connected():
+            self.__vc_master.stop_listening()
+            await self.__vc_master.disconnect()
 
-        if self._vc_speaker and self._vc_speaker.is_connected():
-            self._vc_speaker.stop()
-            await self._vc_speaker.disconnect()
+        if self.__vc_speaker and self.__vc_speaker.is_connected():
+            self.__vc_speaker.stop()
+            await self.__vc_speaker.disconnect()
 
         self.__drain_queue()
 
         self.invoker_id = None
         self.listen_channel = None
         self.speak_channel = None
-        self._vc_master = None
-        self._vc_speaker = None
+        self.__vc_master = None
+        self.__vc_speaker = None
 
         log(f"[RELAY] Stopped: {reason}")
 

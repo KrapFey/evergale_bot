@@ -1,7 +1,6 @@
 """Utility command group for Evergale BOT."""
 
 import asyncio
-import contextlib
 import datetime
 import json
 from collections.abc import Callable
@@ -37,11 +36,12 @@ def _save_report(msg_tag: str, parsed: _ParsedData) -> None:
     report_data: dict[str, object] = {}
     if report_file.exists():
         try:
-            with (report_file.open("r", encoding="utf-8") as f,
-                  contextlib.suppress(json.JSONDecodeError)):
+            with report_file.open("r", encoding="utf-8") as f:
                 report_data = json.load(f)
-        except OSError:
-            pass
+        except json.JSONDecodeError:
+            log(f"[ARCHIVE] Corrupted report file: {report_file.name}, starting fresh")
+        except OSError as exc:
+            log(f"[ARCHIVE] Could not read report file {report_file.name}: {exc}")
     report_data[str(timestamp)] = parsed["groups"]
     with report_file.open("w", encoding="utf-8") as f:
         json.dump(report_data, f, indent=4)

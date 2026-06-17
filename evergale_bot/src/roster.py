@@ -1,6 +1,5 @@
 """Roster command group, UI components, and raid parser for Evergale BOT."""
 
-import contextlib
 import json
 import re
 from collections import defaultdict
@@ -154,7 +153,7 @@ class GroupSelectView(discord.ui.View):
                 lines = [f"{emoji_lookup.get(m, str(icon))} {m}" for m in sorted_m]
                 val = "\n".join(lines)
                 em.add_field(name=f"{get_cat_icon(cat)} **{cat} ({len(sorted_m)})** {pad}",
-                             value=val[:1020] + "..." if len(val) > 1024 else val, inline=True)
+                             value=val[:1021] + "..." if len(val) > 1024 else val, inline=True)
             em.set_footer(text=stretcher)
             embeds.append(em)
         return embeds
@@ -263,8 +262,11 @@ def _load_report_data(tag: str) -> dict[str, dict[str, list[str]]]:
     data: dict[str, dict[str, list[str]]] = {}
     for f in files:
         if f.exists():
-            with f.open("r", encoding="utf-8") as fp, contextlib.suppress(json.JSONDecodeError):
-                data.update(json.load(fp))
+            try:
+                with f.open("r", encoding="utf-8") as fp:
+                    data.update(json.load(fp))
+            except json.JSONDecodeError:
+                log(f"[ROSTER] Corrupted report file: {f.name}")
     return data
 
 

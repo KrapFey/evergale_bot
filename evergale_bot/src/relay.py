@@ -36,11 +36,17 @@ class Relay(app_commands.Group, name="relay", description="Voice relay managemen
             await interaction.followup.send("A relay is already active.", ephemeral=True)
             return
 
-        if not interaction.user.voice:
-            await interaction.followup.send("You are not in a voice channel.", ephemeral=True)
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.followup.send("This command must be used in a server.",
+                                            ephemeral=True)
             return
 
-        listen_ch = interaction.user.voice.channel
+        voice_ch = interaction.user.voice.channel if interaction.user.voice else None
+        if not isinstance(voice_ch, discord.VoiceChannel):
+            await interaction.followup.send("You must be in a voice channel.", ephemeral=True)
+            return
+
+        listen_ch = voice_ch
 
         if speak.id == listen_ch.id:
             await interaction.followup.send(
@@ -58,10 +64,9 @@ class Relay(app_commands.Group, name="relay", description="Voice relay managemen
                 listen_ch=listen_ch,
                 speak_ch=speak,
             )
-        except Exception as exc:
+        except (discord.ClientException, RuntimeError, TimeoutError) as exc:
             log(f"[RELAY] Start failed: {exc}")
-            await interaction.followup.send(
-                f"Failed to start relay: {exc}", ephemeral=True)
+            await interaction.followup.send("Failed to start the relay.", ephemeral=True)
             return
 
         await interaction.followup.send(

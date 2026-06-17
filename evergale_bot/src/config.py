@@ -26,7 +26,7 @@ ROLE_EMOJI_IDS: dict[str, int] = {
 class Config:
     """Static configuration values for the bot."""
 
-    GUILD_ID: ClassVar[int] = int(os.getenv("GUILD_ID", 0))
+    GUILD_ID: ClassVar[int] = int(os.getenv("GUILD_ID", "0"))
     MAX_PURGE_SCAN: ClassVar[int] = 1_000
     RAID_HELPER_ID: ClassVar[int] = 579155972115660803
     EVENT_TAGS: ClassVar[list[str]] = [
