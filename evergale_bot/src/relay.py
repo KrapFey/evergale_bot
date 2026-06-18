@@ -36,6 +36,14 @@ class Relay(app_commands.Group, name="relay", description="Voice relay managemen
             await interaction.followup.send("A relay is already active.", ephemeral=True)
             return
 
+        if not discord.opus.is_loaded():
+            await interaction.followup.send(
+                "Voice relay is unavailable: the Opus audio library is not loaded on the "
+                "bot host, so audio cannot be decoded.",
+                ephemeral=True,
+            )
+            return
+
         if not isinstance(interaction.user, discord.Member):
             await interaction.followup.send("This command must be used in a server.",
                                             ephemeral=True)
@@ -89,9 +97,12 @@ class Relay(app_commands.Group, name="relay", description="Voice relay managemen
             await interaction.followup.send("No relay is currently active.", ephemeral=True)
             return
 
-        if interaction.user.id != self.__bridge.invoker_id:
+        is_admin = (isinstance(interaction.user, discord.Member)
+                    and interaction.user.guild_permissions.administrator)
+        if interaction.user.id != self.__bridge.invoker_id and not is_admin:
             await interaction.followup.send(
-                "Only the person who started the relay can stop it.", ephemeral=True)
+                "Only the person who started the relay or a server admin can stop it.",
+                ephemeral=True)
             return
 
         log(f"[RELAY] Stop requested by @{interaction.user.display_name}")

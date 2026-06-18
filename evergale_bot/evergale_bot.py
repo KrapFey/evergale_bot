@@ -64,23 +64,45 @@ async def on_ready() -> None:
     log(f"[BOT] Synced {len(synced)} commands to guild {Config.GUILD_ID}")
 
 
+def _relay_bot_ids() -> set[int]:
+    """Return the user IDs of the bots participating in the relay.
+
+    Returns:
+        A set containing the master and (if present) speaker bot user IDs.
+    """
+    ids: set[int] = set()
+    if BOT.user:
+        ids.add(BOT.user.id)
+    if _STATE.bot_speaker and _STATE.bot_speaker.user:
+        ids.add(_STATE.bot_speaker.user.id)
+    return ids
+
+
 @BOT.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState,
                                 after: discord.VoiceState) -> None:
-    """Auto-stop the relay when the invoker leaves their voice channel.
+    """Auto-stop the relay when the invoker or a relay bot leaves a relay channel.
 
     Args:
         member: The member whose voice state changed.
         before: Voice state before the change.
         after: Voice state after the change.
     """
-    if _STATE.bridge is None or not _STATE.bridge.active:
+    bridge = _STATE.bridge
+    if bridge is None or not bridge.active:
         return
-    if member.id != _STATE.bridge.invoker_id:
-        return
-    if before.channel == _STATE.bridge.listen_channel and after.channel != _STATE.bridge.listen_channel:
+
+    def left(channel: discord.VoiceChannel | None) -> bool:
+        return before.channel == channel and after.channel != channel
+
+    if member.id == bridge.invoker_id and left(bridge.listen_channel):
         log(f"[RELAY] Auto-stop: @{member.display_name} left #{before.channel.name}")
-        await _STATE.bridge.teardown("invoker left the channel")
+        await bridge.teardown("invoker left the channel")
+        return
+    if member.id in _relay_bot_ids() and (left(bridge.listen_channel)
+                                          or left(bridge.speak_channel)):
+        log("[RELAY] Auto-stop: a relay bot was disconnected from voice")
+        await bridge.teardown("a relay bot was disconnected from voice")
 
 
 async def _on_speaker_ready() -> None:
