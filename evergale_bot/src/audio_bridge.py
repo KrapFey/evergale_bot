@@ -25,16 +25,19 @@ class UserSink(voice_recv.AudioSink):
     the oldest frame is dropped to prevent unbounded latency growth.
     """
 
-    def __init__(self, target_user_id: int, audio_queue: thread_queue.Queue[bytes]) -> None:
+    def __init__(self, target_user_id: int, audio_queue: thread_queue.Queue[bytes],
+                 voice_client: voice_recv.VoiceRecvClient) -> None:
         """Initialise the sink.
 
         Args:
             target_user_id: Discord user ID whose audio will be captured.
             audio_queue: Shared thread-safe queue to push PCM frames into.
+            voice_client: The master voice client, used to map SSRC to user id.
         """
         super().__init__()
         self.__target_user_id: int = target_user_id
         self.__queue: thread_queue.Queue[bytes] = audio_queue
+        self.__vc: voice_recv.VoiceRecvClient = voice_client
         self.__calls: int = 0
         self.__queued: int = 0
         self.__drop_user: int = 0
@@ -52,9 +55,15 @@ class UserSink(voice_recv.AudioSink):
             data: Voice frame containing decoded PCM data.
         """
         self.__calls += 1
-        if user is None or user.id != self.__target_user_id:
+        # Resolve the speaker from the raw SSRC->id map (populated by the SPEAKING
+        # gateway op), which does not depend on the member cache like ``data.source``
+        # does. Accept the frame if either path identifies the target.
+        speaker_id = self.__vc._get_id_from_ssrc(data.packet.ssrc)  # noqa: SLF001
+        is_target = (speaker_id == self.__target_user_id
+                     or (user is not None and user.id == self.__target_user_id))
+        if not is_target:
             self.__drop_user += 1
-            self.__last_seen_id = None if user is None else user.id
+            self.__last_seen_id = speaker_id if user is None else user.id
             self.__log_stats()
             return
         pcm = data.pcm
@@ -231,7 +240,7 @@ class AudioBridge:
             speak_ch: Voice channel the speaker bot joins.
         """
         self.__vc_master = await listen_ch.connect(cls=voice_recv.VoiceRecvClient)
-        self.__vc_master.listen(UserSink(invoker.id, self.queue))
+        self.__vc_master.listen(UserSink(invoker.id, self.queue, self.__vc_master))
         speaker_ch = await self.__resolve_speaker_channel(speak_ch)
         self.__vc_speaker = await speaker_ch.connect()
         self.__vc_speaker.play(BridgeAudioSource(self.queue))
