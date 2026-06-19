@@ -107,17 +107,15 @@ class GroupSelectView(discord.ui.View):
         self.__add_chunks(maybe_data, "Attack (❔ Maybe)")
 
     def __add_chunks(self, data: list[tuple[str, discord.Member | None]], prefix: str) -> None:
-        """Split data into 25-item select chunks and add them to the view.
-
-        Args:
-            data: List of (name, member) tuples.
-            prefix: Label prefix shown in the dropdown placeholder.
-        """
         chunks = [data[i: i + 25] for i in range(0, len(data), 25)]
         for i, chunk in enumerate(chunks):
-            options = [discord.SelectOption(label=name, value=name,
-                                            emoji=get_role_emoji(member))
-                       for name, member in chunk]
+            options = [
+                discord.SelectOption(label=name[:99], value=name[:99],
+                                     emoji=get_role_emoji(member))
+                for name, member in chunk
+            ]
+            if len(self.selects) >= 4:
+                break
             select = RosterSelect(options, placeholder=f"{prefix} - Part {i + 1}...")
             self.selects.append(select)
             self.add_item(select)
@@ -226,8 +224,9 @@ async def _fetch_message(interaction: discord.Interaction,
                 channel = await interaction.guild.fetch_channel(ch_id)
             return await channel.fetch_message(m_id)
         return await interaction.channel.fetch_message(int(input_str))
-    except (discord.NotFound, discord.HTTPException, ValueError):
-        log("[ROSTER] Message fetch failed")
+    except (discord.NotFound, discord.HTTPException, ValueError, AttributeError,
+            discord.Forbidden) as e:
+        log(f"[ROSTER] Message fetch failed: {e}")
         return None
 
 
@@ -348,32 +347,38 @@ class Roster(app_commands.Group, name="roster", description="Raid roster managem
         name = interaction.user.display_name
         log(f"[ROSTER] Generate requested by @{name} -> #{destination.name}")
         await interaction.response.defer(ephemeral=True)
-        if not interaction.guild:
-            await interaction.followup.send("Must be run in a server.", ephemeral=True)
-            return
-        r_msg = await _fetch_message(interaction, raid_msg)
-        if not r_msg:
-            await interaction.followup.send(
-                "Could not find the Raid message. Make sure the link or ID is correct.",
-                ephemeral=True)
-            return
-        if r_msg.author.id != Config.RAID_HELPER_ID:
-            await interaction.followup.send(
-                "The message provided was not sent by the Raid-Helper bot.", ephemeral=True)
-            return
-        parsed = RaidParser.parse(r_msg)
-        groups = parsed["groups"]
-        if not groups["Accepted"] and not groups["Maybe"]:
-            await interaction.followup.send("Could not find any users in the message.",
+        try:
+            if not interaction.guild:
+                await interaction.followup.send("Must be run in a server.", ephemeral=True)
+                return
+            r_msg = await _fetch_message(interaction, raid_msg)
+            if not r_msg:
+                await interaction.followup.send("Could not find the Raid message. "
+                                               "Ensure the link is correct and the bot has access.",
+                                               ephemeral=True)
+                return
+            if r_msg.author.id != Config.RAID_HELPER_ID:
+                await interaction.followup.send("The message provided was not sent by the "
+                                                "Raid-Helper bot.", ephemeral=True)
+                return
+            parsed = RaidParser.parse(r_msg)
+            groups = parsed["groups"]
+            if not groups["Accepted"] and not groups["Maybe"]:
+                await interaction.followup.send("Could not find any users in the message.",
+                                                ephemeral=True)
+                return
+            resolved_accepted = _resolve_members(groups["Accepted"], interaction.guild)
+            resolved_maybe = _resolve_members(groups["Maybe"], interaction.guild)
+            view = GroupSelectView(resolved_accepted, resolved_maybe, destination)
+            prompt = ("**Roster Setup:** Please select the players below who belong in "
+                        "**Group Attack**.\n*(Everyone else will automatically be placed in "
+                        "**Group Defense** when you click Confirm)*.")
+            await interaction.followup.send(prompt, view=view, ephemeral=True)
+        except Exception as e:
+            log(f"[ROSTER] Fatal Crash in Generate: {repr(e)}")
+            await interaction.followup.send(f"❌ Internal bot error occurred: `{e}`. "
+                                            "Check console logs.",
                                             ephemeral=True)
-            return
-        resolved_accepted = _resolve_members(groups["Accepted"], interaction.guild)
-        resolved_maybe = _resolve_members(groups["Maybe"], interaction.guild)
-        view = GroupSelectView(resolved_accepted, resolved_maybe, destination)
-        prompt = ("**Roster Setup:** Please select the players below who belong in "
-                  "**Group Attack**.\n*(Everyone else will automatically be placed in "
-                  "**Group Defense** when you click Confirm)*.")
-        await interaction.followup.send(prompt, view=view, ephemeral=True)
 
     @app_commands.command(name="attendance", description="Generate an attendance report")
     @app_commands.default_permissions(administrator=True)
