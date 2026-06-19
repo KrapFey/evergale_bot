@@ -3,6 +3,7 @@
 import datetime
 import logging
 import logging.handlers
+import os
 from pathlib import Path
 
 _LOG_FILE: Path = Path("app.log")
@@ -18,6 +19,27 @@ _file_logger: logging.Logger = logging.getLogger("evergale_bot")
 _file_logger.addHandler(_handler)
 _file_logger.setLevel(logging.DEBUG)
 _file_logger.propagate = False
+
+
+def _attach_library_logging() -> None:
+    """Route discord.py / voice_recv internal logs into app.log for diagnosis.
+
+    Only active when ``RELAY_DEBUG`` is set. Surfaces receive-thread errors
+    (decryption, opus decode, DAVE/E2EE) that the library would otherwise log
+    to an unconfigured logger and that would never reach the operator.
+    """
+    if os.getenv("RELAY_DEBUG", "").strip().lower() in ("", "0", "false"):
+        return
+    lib_handler = logging.handlers.RotatingFileHandler(
+        _LOG_FILE, maxBytes=_MAX_BYTES, backupCount=_BACKUP_COUNT, encoding="utf-8",
+    )
+    lib_handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
+    discord_logger = logging.getLogger("discord")
+    discord_logger.setLevel(logging.DEBUG)
+    discord_logger.addHandler(lib_handler)
+
+
+_attach_library_logging()
 
 
 def log(message: str) -> None:

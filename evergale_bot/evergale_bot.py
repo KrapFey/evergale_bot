@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 
 import discord
+import discord.voice_state
 from discord.ext import commands
 
 from evergale_bot.src.audio_bridge import AudioBridge
@@ -126,6 +127,22 @@ async def _run(master_token: str, speaker_token: str | None) -> None:
         await BOT.start(master_token)
 
 
+def _disable_dave() -> None:
+    """Disable Discord's DAVE end-to-end voice encryption.
+
+    The voice-recv extension cannot decrypt DAVE-protected audio, so while DAVE
+    is active the master bot receives no decodable frames and the relay stays
+    silent. Advertising DAVE protocol version 0 makes Discord fall back to
+    transport-only encryption, which voice-recv supports. The bot intentionally
+    reads the invoker's audio, so end-to-end encryption is not applicable here.
+    """
+    try:
+        discord.voice_state.has_dave = False
+        log("[BOT] DAVE end-to-end encryption disabled (required for relay receive)")
+    except AttributeError as exc:
+        log(f"[BOT] Could not disable DAVE — discord.py internals may have changed: {exc}")
+
+
 def _ensure_opus() -> bool:
     """Attempt to load libopus if not already loaded.
 
@@ -152,6 +169,7 @@ def main() -> int:
 
     speaker_token = os.getenv("SPEAKER_TOKEN")
     if speaker_token:
+        _disable_dave()
         if not _ensure_opus():
             log("[BOT] WARNING: libopus not found — relay audio will not work. "
                 "Install the Opus library via your system package manager (e.g. apt/brew/choco).")
