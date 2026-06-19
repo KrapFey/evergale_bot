@@ -55,6 +55,7 @@ class UserSink(voice_recv.AudioSink):
             data: Voice frame containing decoded PCM data.
         """
         self.__calls += 1
+        self.__debug_first_frames(user, data)
         # Resolve the speaker from the raw SSRC->id map (populated by the SPEAKING
         # gateway op), which does not depend on the member cache like ``data.source``
         # does. Accept the frame if either path identifies the target.
@@ -99,6 +100,31 @@ class UserSink(voice_recv.AudioSink):
         log(f"[RELAY-DBG] sink calls={self.__calls} queued={self.__queued} "
             f"drop_user={self.__drop_user} drop_size={self.__drop_size} "
             f"last_other_id={self.__last_seen_id} qsize={self.__queue.qsize()}")
+
+    def __debug_first_frames(self, user: discord.Member | discord.User | None,
+                             data: voice_recv.VoiceData) -> None:
+        """Log raw details of the first few frames for one-shot diagnosis.
+
+        Args:
+            user: The resolved source member/user, or None.
+            data: The voice frame being processed.
+        """
+        if not _RELAY_DEBUG or self.__calls > 5:
+            return
+        sid = self.__vc._get_id_from_ssrc(data.packet.ssrc)  # noqa: SLF001
+        src = user.id if user is not None else None
+        log(f"[RELAY-DBG] frame#{self.__calls} ssrc={data.packet.ssrc} "
+            f"resolved_id={sid} source_id={src} pcm_len={len(data.pcm)}")
+
+    @voice_recv.AudioSink.listener()
+    def on_voice_member_speaking_start(self, member: discord.Member) -> None:
+        """Log when the gateway reports a member started speaking (debug only).
+
+        Args:
+            member: The member who began speaking.
+        """
+        if _RELAY_DEBUG:
+            log(f"[RELAY-DBG] speaking_start member_id={getattr(member, 'id', None)}")
 
     def cleanup(self) -> None:
         """Called by discord.py when the sink is detached."""
