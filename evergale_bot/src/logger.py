@@ -28,5 +28,10 @@ def log(message: str) -> None:
     """
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     formatted_msg = f"[{now}] 🤖 {message}"
-    print(formatted_msg)
+    # Write to the rotating file first (UTF-8, always succeeds) so a console that
+    # cannot encode the message never costs us the log line — or crashes the caller.
     _file_logger.info(formatted_msg)
+    try:
+        print(formatted_msg)
+    except UnicodeEncodeError:
+        print(formatted_msg.encode("ascii", "replace").decode("ascii"))
