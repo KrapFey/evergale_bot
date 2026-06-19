@@ -7,6 +7,7 @@ import queue as thread_queue
 from dataclasses import dataclass, field
 from typing import ClassVar
 
+import davey
 import discord
 from discord.ext import commands, voice_recv
 
@@ -19,10 +20,13 @@ _RELAY_DEBUG: bool = os.getenv("RELAY_DEBUG", "").strip().lower() not in ("", "0
 
 
 class UserSink(voice_recv.AudioSink):
-    """Captures PCM audio from a single target user and feeds it into the bridge queue.
+    """Captures the target user's audio, DAVE-decrypts it, and queues PCM frames.
 
-    Frames from all other users are silently discarded. When the queue is full
-    the oldest frame is dropped to prevent unbounded latency growth.
+    The sink requests raw Opus (``wants_opus`` is True) because under Discord's
+    DAVE end-to-end encryption the payload must be decrypted with the voice
+    connection's MLS session before it can be Opus-decoded. Frames from other
+    users are discarded; when the queue is full the oldest frame is dropped to
+    bound latency.
     """
 
     def __init__(self, target_user_id: int, audio_queue: thread_queue.Queue[bytes],
@@ -32,52 +36,102 @@ class UserSink(voice_recv.AudioSink):
         Args:
             target_user_id: Discord user ID whose audio will be captured.
             audio_queue: Shared thread-safe queue to push PCM frames into.
-            voice_client: The master voice client, used to map SSRC to user id.
+            voice_client: The master voice client, used for SSRC->id mapping and
+                access to the DAVE session.
         """
         super().__init__()
         self.__target_user_id: int = target_user_id
         self.__queue: thread_queue.Queue[bytes] = audio_queue
         self.__vc: voice_recv.VoiceRecvClient = voice_client
+        self.__decoder: discord.opus.Decoder = discord.opus.Decoder()
         self.__calls: int = 0
         self.__queued: int = 0
         self.__drop_user: int = 0
         self.__drop_size: int = 0
+        self.__decrypt_errors: int = 0
         self.__last_seen_id: int | None = None
         if _RELAY_DEBUG:
             log(f"[RELAY-DBG] sink listening for user_id={target_user_id}")
 
     def write(self, user: discord.Member | discord.User | None,
               data: voice_recv.VoiceData) -> None:
-        """Write a received audio frame, filtering to the target user.
+        """Decrypt and decode a received frame from the target user, then queue it.
 
         Args:
             user: The Discord user who produced the audio, or None if unknown.
-            data: Voice frame containing decoded PCM data.
+            data: Voice frame carrying the (transport-decrypted) Opus payload.
         """
         self.__calls += 1
         self.__debug_first_frames(user, data)
-        # Resolve the speaker from the raw SSRC->id map (populated by the SPEAKING
-        # gateway op), which does not depend on the member cache like ``data.source``
-        # does. Accept the frame if either path identifies the target.
-        speaker_id = self.__vc._get_id_from_ssrc(data.packet.ssrc)  # noqa: SLF001
-        is_target = (speaker_id == self.__target_user_id
-                     or (user is not None and user.id == self.__target_user_id))
-        if not is_target:
+        if not self.__is_target(user, data):
             self.__drop_user += 1
-            self.__last_seen_id = speaker_id if user is None else user.id
             self.__log_stats()
             return
-        pcm = data.pcm
-        # voice_recv yields b'' or partial buffers for lost/concealment packets.
-        # Forwarding those downstream stops the speaker's player, so only enqueue
-        # exact 20ms frames.
-        if len(pcm) != _PCM_FRAME_BYTES:
+        pcm = self.__decrypt_and_decode(data.opus)
+        if pcm is None or len(pcm) != _PCM_FRAME_BYTES:
             self.__drop_size += 1
             self.__log_stats()
             return
         self.__enqueue(pcm)
         self.__queued += 1
         self.__log_stats()
+
+    def __is_target(self, user: discord.Member | discord.User | None,
+                    data: voice_recv.VoiceData) -> bool:
+        """Return True if the frame came from the target invoker.
+
+        Resolves the speaker from the raw SSRC->id map (populated by the SPEAKING
+        gateway op), which does not depend on the member cache like ``data.source``.
+
+        Args:
+            user: The resolved source member/user, or None.
+            data: The voice frame being processed.
+
+        Returns:
+            True if the frame belongs to the target user.
+        """
+        speaker_id = self.__vc._get_id_from_ssrc(data.packet.ssrc)  # noqa: SLF001
+        if speaker_id == self.__target_user_id:
+            return True
+        if user is not None and user.id == self.__target_user_id:
+            return True
+        self.__last_seen_id = speaker_id if user is None else user.id
+        return False
+
+    def __decrypt_and_decode(self, opus: bytes | None) -> bytes | None:
+        """DAVE-decrypt (when the session is active) then Opus-decode to PCM.
+
+        Args:
+            opus: The transport-decrypted Opus payload, still DAVE-encrypted while
+                an end-to-end session is active.
+
+        Returns:
+            A 20ms PCM frame, or None if there was nothing decodable.
+        """
+        if not opus:
+            return None
+        session = self.__vc._connection.dave_session  # noqa: SLF001
+        # Runs on voice-recv's router thread; the DAVE/Opus native calls can raise
+        # assorted native errors and must never kill the receive pipeline.
+        try:
+            if session is not None and session.ready:
+                opus = session.decrypt(self.__target_user_id, davey.MediaType.audio, opus)
+            if not opus:
+                return None
+            return self.__decoder.decode(opus, fec=False)
+        except Exception as exc:
+            self.__note_decrypt_error(exc)
+            return None
+
+    def __note_decrypt_error(self, exc: Exception) -> None:
+        """Record a decrypt/decode failure, logging the first of each batch.
+
+        Args:
+            exc: The exception raised during decrypt or decode.
+        """
+        self.__decrypt_errors += 1
+        if _RELAY_DEBUG and self.__decrypt_errors % _DEBUG_EVERY_FRAMES == 1:
+            log(f"[RELAY] DAVE decrypt/decode error (#{self.__decrypt_errors}): {exc}")
 
     def __enqueue(self, pcm: bytes) -> None:
         """Push a frame, dropping the oldest when the queue is full.
@@ -112,9 +166,11 @@ class UserSink(voice_recv.AudioSink):
         if not _RELAY_DEBUG or self.__calls > 5:
             return
         sid = self.__vc._get_id_from_ssrc(data.packet.ssrc)  # noqa: SLF001
-        src = user.id if user is not None else None
-        log(f"[RELAY-DBG] frame#{self.__calls} ssrc={data.packet.ssrc} "
-            f"resolved_id={sid} source_id={src} pcm_len={len(data.pcm)}")
+        session = self.__vc._connection.dave_session  # noqa: SLF001
+        ready = session.ready if session is not None else None
+        opus_len = len(data.opus) if data.opus else 0
+        log(f"[RELAY-DBG] frame#{self.__calls} ssrc={data.packet.ssrc} resolved_id={sid} "
+            f"source_id={user.id if user else None} opus_len={opus_len} dave_ready={ready}")
 
     @voice_recv.AudioSink.listener()
     def on_voice_member_speaking_start(self, member: discord.Member) -> None:
@@ -130,12 +186,14 @@ class UserSink(voice_recv.AudioSink):
         """Called by discord.py when the sink is detached."""
 
     def wants_opus(self) -> bool:
-        """Dictates if the sink wants encoded Opus data or decoded PCM data.
+        """Request raw Opus so we can DAVE-decrypt before decoding.
 
-        Return False if you want uncompressed PCM data (recommended for relays).
-        Return True if you want compressed Opus packets.
+        Returns:
+            True — under DAVE the payload must be decrypted with the MLS session
+            before it can be Opus-decoded, so voice-recv's own decode path (which
+            would decode the still-encrypted bytes) is bypassed.
         """
-        return False
+        return True
 
 
 class BridgeAudioSource(discord.AudioSource):
