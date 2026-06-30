@@ -36,6 +36,8 @@ class Config:
         "<group_pvp>",
         "<united_resolve>",
         "<speedrun>",
+        "<martial_domain>",
+        "<boss_talent>",
     ]
     CLEAN_EVENT_TAGS: ClassVar[frozenset[str]] = frozenset(
         t.replace("<", "").replace(">", "") for t in EVENT_TAGS
@@ -54,9 +56,16 @@ def get_role_emoji(member: discord.Member | None) -> discord.PartialEmoji | None
     """
     if not member:
         return None
+    matches: list[str] = []
+    found_emoji_id: int = 0
     for role_name, emoji_id in ROLE_EMOJI_IDS.items():
-        if role_name in ("no", "multi"):
-            continue
-        if any(re.search(role_name, role.name, flags=re.IGNORECASE) for role in member.roles):
-            return discord.PartialEmoji(name=role_name.lower().replace(" ", "_"), id=emoji_id)
+        new__set: list[str] = [role_name for role in member.roles if re.search(role_name, role.name,
+                                                                               flags=re.IGNORECASE)]
+        if new__set:
+            found_emoji_id = emoji_id
+            matches.extend(new__set)
+    if len(matches) > 1:
+        return discord.PartialEmoji(name="hybrid", id=ROLE_EMOJI_IDS["multi"])
+    if matches:
+        return discord.PartialEmoji(name=matches[0].lower().replace(" ", "_"), id=found_emoji_id)
     return discord.PartialEmoji(name="n_", id=ROLE_EMOJI_IDS["no"])
