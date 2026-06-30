@@ -90,16 +90,18 @@ class GroupSelectView(discord.ui.View):
 
     def __init__(self, accepted_data: list[tuple[str, discord.Member | None]],
                        maybe_data: list[tuple[str, discord.Member | None]],
-                       destination: discord.TextChannel) -> None:
+                       destination: discord.TextChannel, output_type: str) -> None:
         """Initialize view with dropdowns and send target.
 
         Args:
             accepted_data: List of (name, member) tuples from Accepted.
             maybe_data: List of (name, member) tuples from Maybe.
             destination: Channel where the final report will be sent.
+            output_type: Output type format.
         """
         super().__init__(timeout=600)
         self.destination: discord.TextChannel = destination
+        self.output_type: str = output_type
         self.accepted_data: list[tuple[str, discord.Member | None]] = accepted_data
         self.maybe_data: list[tuple[str, discord.Member | None]] = maybe_data
         self.selects: list[RosterSelect] = []
@@ -120,50 +122,15 @@ class GroupSelectView(discord.ui.View):
             self.selects.append(select)
             self.add_item(select)
 
-    def __format_embeds(self, acc_groups: defaultdict[str, list[str]],
-                        may_groups: defaultdict[str, list[str]],
-                        emoji_lookup: dict[str, str],
-                        icon: discord.PartialEmoji) -> list[discord.Embed]:
-        """Render grouped data as Discord embeds.
-
-        Args:
-            acc_groups: Attack/Defense buckets for Accepted players.
-            may_groups: Attack/Defense buckets for Maybe players.
-            emoji_lookup: Maps player name to emoji string.
-            icon: Fallback emoji.
-
-        Returns:
-            List of formatted embeds.
-        """
-        def get_cat_icon(cat: str) -> str:
-            return "⚔️" if cat == "Attack" else "🛡️"
-
-        pad, stretcher = "⠀" * 12, "⠀" * 60
-        embeds = []
-        for groups, title, color in [(acc_groups, "Accepted", discord.Color.green()),
-                                     (may_groups, "Maybe", discord.Color.gold())]:
-            if not groups:
-                continue
-            em = discord.Embed(title=f"{title} ({sum(len(m) for m in groups.values())})",
-                               color=color)
-            for cat in sorted(groups.keys()):
-                sorted_m = sorted(groups[cat], key=lambda m: m.lower())
-                lines = [f"{emoji_lookup.get(m, str(icon))} {m}" for m in sorted_m]
-                val = "\n".join(lines)
-                em.add_field(name=f"{get_cat_icon(cat)} **{cat} ({len(sorted_m)})** {pad}",
-                             value=val[:1021] + "..." if len(val) > 1024 else val, inline=True)
-            em.set_footer(text=stretcher)
-            embeds.append(em)
-        return embeds
-
-    def __build_embeds(self, group_a: set[str]) -> list[discord.Embed]:
-        """Build the color-coded Attack/Defense embeds.
+    def __parse_groups(self, group_a: set[str]) -> tuple[defaultdict, defaultdict, dict,
+                                                         discord.PartialEmoji]:
+        """Parse groups.
 
         Args:
             group_a: Set of names assigned to Attack group.
 
         Returns:
-            List of embeds (one per Accepted/Maybe section).
+            Parsed information.
         """
         icon = discord.PartialEmoji(name="hybrid", id=ROLE_EMOJI_IDS["multi"])
         acc_groups: defaultdict[str, list[str]] = defaultdict(list)
@@ -177,11 +144,77 @@ class GroupSelectView(discord.ui.View):
             may_groups["Attack" if name in group_a else "Defense"].append(name)
             emoji_obj = get_role_emoji(member)
             emoji_lookup[name] = str(emoji_obj) if emoji_obj else str(icon)
-        return self.__format_embeds(acc_groups, may_groups, emoji_lookup, icon)
+        return acc_groups, may_groups, emoji_lookup, icon
+
+    @staticmethod
+    def __get_cat_icon(cat: str) -> str:
+        return "⚔️" if cat == "Attack" else "🛡️"
+
+    def __format_embeds(self, acc_groups: defaultdict[str, list[str]],
+                              may_groups: defaultdict[str, list[str]],
+                              emoji_lookup: dict[str, str],
+                              icon: discord.PartialEmoji) -> list[discord.Embed]:
+        """Render grouped data as Discord embeds.
+
+        Args:
+            acc_groups: Attack/Defense buckets for Accepted players.
+            may_groups: Attack/Defense buckets for Maybe players.
+            emoji_lookup: Maps player name to emoji string.
+            icon: Fallback emoji.
+
+        Returns:
+            List of formatted embeds.
+        """
+        pad, stretcher = "⠀" * 12, "⠀" * 60
+        embeds = []
+        for groups, title, color in [(acc_groups, "Accepted", discord.Color.green()),
+                                     (may_groups, "Maybe", discord.Color.gold())]:
+            if not groups:
+                continue
+            em = discord.Embed(title=f"{title} ({sum(len(m) for m in groups.values())})",
+                               color=color)
+            for cat in sorted(groups.keys()):
+                sorted_m = sorted(groups[cat], key=lambda m: m.lower())
+                lines = [f"{emoji_lookup.get(m, str(icon))} {m}" for m in sorted_m]
+                val = "\n".join(lines)
+                em.add_field(name=f"{self.__get_cat_icon(cat)} **{cat} ({len(sorted_m)})** {pad}",
+                             value=val[:1021] + "..." if len(val) > 1024 else val, inline=True)
+            em.set_footer(text=stretcher)
+            embeds.append(em)
+        return embeds
+
+    def __format_text(self, acc_groups: defaultdict[str, list[str]],
+                            may_groups: defaultdict[str, list[str]],
+                            emoji_lookup: dict[str, str],
+                            icon: discord.PartialEmoji) -> str:
+        """Render grouped data as MD.
+
+        Args:
+            acc_groups: Attack/Defense buckets for Accepted players.
+            may_groups: Attack/Defense buckets for Maybe players.
+            emoji_lookup: Maps player name to emoji string.
+            icon: Fallback emoji.
+
+        Returns:
+            Markdown formatted text.
+        """
+        text: str = ""
+        for groups, title in [(acc_groups, "Accepted"), (may_groups, "Maybe")]:
+            if not groups:
+                continue
+            text += f"## {title} ({sum(len(m) for m in groups.values())})\n"
+            for cat in sorted(groups.keys()):
+                sorted_m = sorted(groups[cat], key=lambda m: m.lower())
+                lines = [f"{emoji_lookup.get(m, str(icon))} {m}" for m in sorted_m]
+                val = "\n".join(lines)
+                text += f"### {self.__get_cat_icon(cat)} **{cat} ({len(sorted_m)})**\n"
+                text += val[:1021] + "..." if len(val) > 1024 else val
+                text += "\n"
+        return text
 
     @discord.ui.button(label="Confirm & Generate", style=discord.ButtonStyle.green, row=4)
     async def confirm_btn(self, interaction: discord.Interaction,
-                          _button: discord.ui.Button) -> None:
+                                _button: discord.ui.Button) -> None:
         """Generate and send the final color-coded report.
 
         Args:
@@ -190,9 +223,14 @@ class GroupSelectView(discord.ui.View):
         """
         await interaction.response.defer(ephemeral=True)
         group_a = {user for select in self.selects for user in select.values}
-        embeds = self.__build_embeds(group_a)
+        acc_groups, may_groups, emoji_lookup, icon = self.__parse_groups(group_a)
         try:
-            await self.destination.send(embeds=embeds)
+            if self.output_type == "embed":
+                await self.destination.send(embeds=self.__format_embeds(acc_groups, may_groups,
+                                                                        emoji_lookup, icon))
+            else:
+                await self.destination.send(self.__format_text(acc_groups, may_groups, emoji_lookup,
+                                                               icon))
             await interaction.followup.send("Report sent!", ephemeral=True)
         except discord.Forbidden:
             await interaction.followup.send("I don't have permission to post in that channel.",
@@ -334,15 +372,21 @@ class Roster(app_commands.Group, name="roster", description="Raid roster managem
     @app_commands.command(name="generate", description="Generate report")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(raid_msg="Message ID or Link for the Raid-Helper signup",
-                           destination="The channel where the bot will post the embeds")
+                           destination="The channel where the bot will post the embeds",
+                           output_type="Output format type")
+    @app_commands.choices(output_type=[
+        app_commands.Choice(name="embed", value="embed"),
+        app_commands.Choice(name="text", value="text"),
+    ])
     async def generate(self, interaction: discord.Interaction, raid_msg: str,
-                              destination: discord.TextChannel) -> None:
+                             destination: discord.TextChannel, output_type: str="embed") -> None:
         """Parse a Raid-Helper signup and launch the interactive roster view.
 
         Args:
             interaction: The Discord interaction context.
             raid_msg: Message URL or ID of the Raid-Helper signup post.
             destination: Channel to send the final roster report to.
+            output_type: Output type format.
         """
         name = interaction.user.display_name
         log(f"[ROSTER] Generate requested by @{name} -> #{destination.name}")
@@ -369,10 +413,10 @@ class Roster(app_commands.Group, name="roster", description="Raid roster managem
                 return
             resolved_accepted = _resolve_members(groups["Accepted"], interaction.guild)
             resolved_maybe = _resolve_members(groups["Maybe"], interaction.guild)
-            view = GroupSelectView(resolved_accepted, resolved_maybe, destination)
+            view = GroupSelectView(resolved_accepted, resolved_maybe, destination, output_type)
             prompt = ("**Roster Setup:** Please select the players below who belong in "
-                        "**Group Attack**.\n*(Everyone else will automatically be placed in "
-                        "**Group Defense** when you click Confirm)*.")
+                      "**Group Attack**.\n*(Everyone else will automatically be placed in "
+                      "**Group Defense** when you click Confirm)*.")
             await interaction.followup.send(prompt, view=view, ephemeral=True)
         except Exception as e:
             log(f"[ROSTER] Fatal Crash in Generate: {repr(e)}")
